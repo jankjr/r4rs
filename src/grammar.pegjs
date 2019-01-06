@@ -73,7 +73,15 @@ Boolean "boolean"
   = "#t" { return make("boolean", true) }
   / "#f" { return make("boolean", false) }
 
-Number "number"
+Number "sign number"
+ = s:"-"? n:_Number {
+  if (s) {
+    n.value *= -1;
+  }
+  return n;
+ }
+
+_Number "number"
   = int:Digits frac:("." Digits)? {
     if (!frac) return make("int", parseInt(int))
     return make("float", parseFloat(int + frac.join("")))

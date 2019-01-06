@@ -101,7 +101,7 @@ class Continuation extends Error {
     this.args = args;
   }
 }
-const exitOperator = make("native-procedure", (args, env) => { throw new Continuation(args) });
+const exitOperator = make("native-procedure", (args, env) => throw new Continuation(args));
 Object.assign(prelude.scope, {
   // "eqv?"
   // "eq?"
@@ -162,7 +162,7 @@ Object.assign(prelude.scope, {
     const proc = args[0];
     assertType(proc, "procedure");
     try {
-      evalProcedure(proc.value, pair(
+      return evalProcedure(proc.value, pair(
         exitOperator,
         nil
       ), callEnv);
@@ -343,6 +343,7 @@ Object.assign(prelude.scope, {
       for (var j = 0; j < argArrs.length; j++) {
         zipped.push(argArrs[j][i]);
       }
+      prelude.scope.apply.value(zipped, env)
     }
    }, 2, Infinity)
 })
