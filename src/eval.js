@@ -98,6 +98,13 @@ const makeRelatonalOp = (fn, op) => makeNative(args => {
   return jsValToScmVal(true);
 }, 2, Infinity)
 
+class Continuation extends Error {
+  constructor(args) {
+    super("");
+    this.args = args;
+  }
+}
+const exitOperator = make("native-procedure", (args, env) => { throw new Continuation(args) });
 Object.assign(prelude.scope, {
   // "eqv?"
   // "eq?"
@@ -153,6 +160,23 @@ Object.assign(prelude.scope, {
   "char?": wrapPred(isChar),
   "number?": wrapPred(isNumber),
   "procedure?": wrapPred(isProcedure),
+  "call-with-current-continuation": make("native-procedure", (args, callEnv) => {
+    assert(args.length === 1, "call-with-current-continuation takes on arg");
+    const proc = args[0];
+    assertType(proc, "procedure");
+    try {
+      evalProcedure(proc.value, pair(
+        exitOperator,
+        nil
+      ), callEnv);
+    } catch(e) {
+      if (e instanceof Continuation) {
+        return e.args[0];
+      } else {
+        throw e;
+      }
+    }
+  }, 1),
   "vector?": wrapPred(isVector),
   "force": makeNative(v => {
     assertType(v, "native-procedure");
@@ -334,14 +358,16 @@ const syntacticKeywords = {
       }
     )
   },
-  lambda: (exp, env) => make(
-    'procedure',
-    makeProcedure(
-      car(exp),
-      cdr(exp),
-      env
-    )
-  ),
+  lambda: (exp, env) => {
+    return make(
+      'procedure',
+      makeProcedure(
+        car(exp),
+        car(cdr(exp)),
+        env
+      )
+    );
+  },
   vector: (exp, env) => make("vector", toList(exp).map(v => evalSExp(v, env))),
   and: (exp, env) => {
     const terms = toList(exp);
@@ -454,25 +480,18 @@ const evalSExp = (exp, env, tailPosition=false) => {
   if (!isPair(exp)) {
     return exp;
   }
-  const [x, xs] = exp.value;
-  if (!isSymbol(x)) {
-    throw new Error("Cannot apply " + x.type);
+  let [x, xs] = exp.value;
+  if (isSymbol(x) && x.value in syntacticKeywords) {
+    return syntacticKeywords[x.value](xs, env, tailPosition);
   }
-
-  const sym = x.value;
-
-  // syntax
-  if (syntacticKeywords[sym]) {
-    return syntacticKeywords[sym](xs, env, tailPosition);
+  x = evalSExp(x, env, tailPosition);
+  if (!isProcedure(x)) {
+    throw new Error(x.type + " is not applicable");
   }
-  const value = env.lookup(sym);
-  if (!isProcedure(value)) {
-    throw new Error(sym + " is not applicable");
+  if (isNative(x)) {
+    return evalNative(x.value, xs, env)
   }
-  if (isNative(value)) {
-    return evalNative(value.value, xs, env)
-  }
-  return evalProcedure(value.value, xs, env);
+  return evalProcedure(x.value, xs, env);
 }
 
 const printExp = exp => {
