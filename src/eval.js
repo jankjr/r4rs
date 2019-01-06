@@ -153,8 +153,11 @@ Object.assign(prelude.scope, {
   "char?": wrapPred(isChar),
   "number?": wrapPred(isNumber),
   "procedure?": wrapPred(isProcedure),
-
   "vector?": wrapPred(isVector),
+  "force": makeNative(v => {
+    assertType(v, "native-procedure");
+    return v.value();
+  }, 1),
   "vector-set!": makeNative((v, k, o) => {
     assertType(v, "vector");
     if (!isNumber(k)) {
@@ -282,9 +285,6 @@ Object.assign(prelude.scope, {
   }, 2)
 })
 
-
-
-
 const makeProcedure = (formals, body, env) => {
   const params = {
     formals: [],
@@ -293,16 +293,13 @@ const makeProcedure = (formals, body, env) => {
     restArgName: null
   };
   let formalsArr = formals
-  for(;;) {
+  while(isPair(formalsArr)) {
     const v = car(formalsArr);
     if (!isSymbol(v) && v.value in syntacticKeywords) {
       throw new Error("Invalid formals definition, expected symbol got " + v.type);
     }
     params.formals.push(v.value);
     formalsArr = cdr(formalsArr);
-    if (!isPair(formalsArr)) {
-      break;
-    }
   }
   if (isSymbol(formalsArr)) {
     if (formalsArr.value in syntacticKeywords) {
@@ -325,6 +322,18 @@ const makeProcedure = (formals, body, env) => {
 const isFalse = v => v.type === "boolean" && v.value === false;
 const syntacticKeywords = {
   quote: (exp, env) => exp.value[0],
+  delay: (exp, env) => {
+    let res = null;
+    return make(
+      'native-procedure',
+      () => {
+        if (res === null) {
+          res = evalSExp(car(exp), env, true);
+        }
+        return res;
+      }
+    )
+  },
   lambda: (exp, env) => make(
     'procedure',
     makeProcedure(
@@ -479,10 +488,15 @@ const printExp = exp => {
     case "native-procedure": return "[native-procedure]";
     case "symbol": return "[native-procedure]";
     case "pair":
-      if (isNil(exp.value[1])) {
-        return printExp(exp.value[0]);
+      let res = [];
+      while(isPair(exp)) {
+        res.push(printExp(car(exp)));
+        exp = cdr(exp);
       }
-      return `(${printExp(exp.value[0])} ${printExp(exp.value[1])})`;
+      if (isNil(exp)) {
+        return `(${res.join(" ")})`
+      }
+      return `(${res.join(" ")} . ${printExp(exp)})`
     case "null": return "()";
     case "vector": return `[${exp.value.map(printExp).join(", ")}]`
   }
@@ -490,6 +504,8 @@ const printExp = exp => {
 
 const repl = () => {
   const env = new Env(prelude);
+  console.log(`R4rsjs Interpreter version 0.1 🎉
+Copyright ©️  2019 Jan Kjærgaard`);
   const repl = require('repl');
   const r = repl.start({ prompt: '> ', eval: evalCmd, writer: myWriter });
   function evalCmd(cmd, context, filename, callback) {
