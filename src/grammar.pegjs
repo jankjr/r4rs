@@ -1,9 +1,13 @@
 {
-  const make = (type, value) => ({ type, value })
-  const pair = (a, b) => make("pair", [a, b])
-  const nil = make("null", null);
-  const symbol = name => make("symbol", name)
-  const list = (entries, first=nil) => entries.reduceRight((l, r) => pair(r, l), first)
+  const{
+    make,
+    pair,
+    nil,
+    symbol,
+    list,
+    True,
+    False
+  } = require("./types");
   const desugar = (t, e) => list([symbol(t), e])
 }
 
@@ -70,8 +74,8 @@ StringChr "char"
  / "\\\"" { return "\"" }
 
 Boolean "boolean"
-  = "#t" { return make("boolean", true) }
-  / "#f" { return make("boolean", false) }
+  = "#t" { return True }
+  / "#f" { return False }
 
 Number "sign number"
  = s:"-"? n:_Number {

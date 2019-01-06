@@ -1,18 +1,20 @@
 /**
  * This is the scheme interpreter
  */
-
 const grammar = require('./grammar.js')
-const { isPair, isVector, isProcedure, isNative, isSymbol, isString, isBoolean, isNil, isChar, isNumber } = require("./types");
+const { isPair, isFalse, isVector, isProcedure, isNative, isSymbol, isString, isBoolean, isNil, isChar, isNumber,
+  make,
+  pair,
+  nil,
+  symbol,
+  list,
+  True,
+  False
+ } = require("./types");
 const { Env } = require("./Env");
-const make = (type, value) => ({ type, value });
-const pair = (a, b) => make("pair", [a, b])
-const nil = make("null", null);
-const symbol = name => make("symbol", name)
-const list = (entries, first = nil) => entries.reduceRight((l, r) => pair(r, l), first)
-const True =  make("boolean", true);
-const False =  make("boolean", false);
+
 const Zero = make("int", 0);
+
 const jsValToScmVal = v => {
   const t = typeof v;
   switch(t) {
@@ -101,7 +103,7 @@ class Continuation extends Error {
     this.args = args;
   }
 }
-const exitOperator = make("native-procedure", (args, env) => throw new Continuation(args));
+const exitOperator = make("native-procedure", (args, env) => { throw new Continuation(args); });
 Object.assign(prelude.scope, {
   // "eqv?"
   // "eq?"
@@ -247,17 +249,17 @@ Object.assign(prelude.scope, {
   "negative?": makeNative(v => (assert(isNumber(v), "negative? expects number"), jsValToScmVal(v.value < 0)), 1),
   "odd?": makeNative(v => (assert(isNumber(v), "odd? expects number"), jsValToScmVal(v.value % 2 === 1)), 1),
   "even?": makeNative(v => (assert(isNumber(v), "even? expects number"), jsValToScmVal(v.value % 2 === 0)), 1),
-  "max": makeNative(v => jsValToScmVal(v.reduce((l, r) => {
+  max: makeNative(v => jsValToScmVal(v.reduce((l, r) => {
     if (!isNumber(r)) throw new Error("max only works for numbers");
     return Math.max(l, r.value);
   }, -Infinity)), 2, Infinity),
-  "min": makeNative(v => jsValToScmVal(v.reduce((l, r) => {
+  min: makeNative(v => jsValToScmVal(v.reduce((l, r) => {
     if (!isNumber(r)) throw new Error("nub only works for numbers");
     return Math.min(l, r.value);
   }, Infinity)), 2, Infinity),
-  "floor": makeNative(v => (assert(isNumber(v), "floor expects number"), jsValToScmVal(Math.floor(v.value))), 1), 
-  "ceiling": makeNative(v => (assert(isNumber(v), "ceiling expects number"), jsValToScmVal(Math.ceil(v.value))), 1), 
-  "round": makeNative(v => (assert(isNumber(v), "ceiling expects number"), jsValToScmVal(Math.round(v.value))), 1),
+  floor: makeNative(v => (assert(isNumber(v), "floor expects number"), jsValToScmVal(Math.floor(v.value))), 1), 
+  ceiling: makeNative(v => (assert(isNumber(v), "ceiling expects number"), jsValToScmVal(Math.ceil(v.value))), 1), 
+  round: makeNative(v => (assert(isNumber(v), "ceiling expects number"), jsValToScmVal(Math.round(v.value))), 1),
   // "truncate"
   "number-string":makeNative((v, k) => {
     assert(isNumber(v), "number->string expects number")
@@ -382,15 +384,12 @@ const makeProcedure = (formals, body, env) => {
   }
 }
 
-const isFalse = v => v.type === "boolean" && v.value === false;
+
 const syntacticKeywords = {
   let: (exp, env) => {
     const letDef = toList(exp);
-    if (letDef.length !== 2) throw new Error("Let takes at least two clauses");
-    const [
-      bindingsBlock,
-      body
-    ] = letDef;
+    if (letDef.length < 2) throw new Error("Let takes at least two clauses");
+    const bindingsBlock = letDef[0];
     const bindings = toList(bindingsBlock);
     const subEnv = env.subscope();
     const values = bindings.map(p => {
@@ -400,42 +399,39 @@ const syntacticKeywords = {
     }).forEach(([name, value]) => {
       subEnv.define(name, value);
     });
-    return evalSExp(body, subEnv, true);
+    for (var i = 1; i < letDef.length-1; i++) evalSExp(letDef[i], subEnv, false);
+    return evalSExp(letDef[letDef.length - 1], subEnv, true);
   },
   "let*": (exp, env) => {
     const letDef = toList(exp);
-    if (letDef.length !== 2) throw new Error("Let* takes at least two clauses");
-    const [
-      bindingsBlock,
-      body
-    ] = letDef;
+    if (letDef.length < 2) throw new Error("let* takes at least two clauses");
+    const bindingsBlock = letDef[0];
     const bindings = toList(bindingsBlock);
     const subEnv = env.subscope();
     bindings.forEach(p => {
       const name = car(p);
-      if (!isSymbol(name)) throw new Error("let binding clauses must have form (name init)");
+      if (!isSymbol(name)) throw new Error("let* binding clauses must have form (name init)");
       subEnv.define(name.value, evalSExp(car(cdr(p)), subEnv));
     });
-    return evalSExp(body, subEnv, true);
+    for (var i = 1; i < letDef.length-1; i++) evalSExp(letDef[i], subEnv, false);
+    return evalSExp(letDef[letDef.length - 1], subEnv, true);
   },
   "letrec": (exp, env) => {
     const letDef = toList(exp);
-    if (letDef.length !== 2) throw new Error("Let* takes at least two clauses");
-    const [
-      bindingsBlock,
-      body
-    ] = letDef;
+    if (letDef.length < 2) throw new Error("letrec takes at least two clauses");
+    const bindingsBlock = letDef[0];
     const bindings = toList(bindingsBlock);
     const subEnv = env.subscope();
     bindings.forEach(p => {
       const name = car(p);
-      if (!isSymbol(name)) throw new Error("let binding clauses must have form (name init)");
+      if (!isSymbol(name)) throw new Error("letrec binding clauses must have form (name init)");
       subEnv.define(name.value, nil);
     });
     bindings.forEach(p => {
       subEnv.set(car(p).value, evalSExp(car(cdr(p)), subEnv));
     });
-    return evalSExp(body, subEnv, true);
+    for (var i = 1; i < letDef.length-1; i++) evalSExp(letDef[i], subEnv, false);
+    return evalSExp(letDef[letDef.length - 1], subEnv, true);
   },
   quote: (exp, env) => exp.value[0],
   delay: (exp, env) => {
@@ -597,7 +593,6 @@ const printExp = exp => {
     case "char": return `'${exp.value}'`;
     case "procedure": return "[procedure]";
     case "native-procedure": return "[native-procedure]";
-    case "symbol": return "[native-procedure]";
     case "pair":
       let res = [];
       while(isPair(exp)) {
@@ -613,10 +608,11 @@ const printExp = exp => {
   }
 }
 
+const REPL_BANNER = `R4rsjs Interpreter version 0.1 🎉
+Copyright ©️  2019 Jan Kjærgaard`;
 const repl = () => {
   const env = new Env(prelude);
-  console.log(`R4rsjs Interpreter version 0.1 🎉
-Copyright ©️  2019 Jan Kjærgaard`);
+  console.log(REPL_BANNER);
   const repl = require('repl');
   const r = repl.start({ prompt: '> ', eval: evalCmd, writer: myWriter });
   function evalCmd(cmd, context, filename, callback) {

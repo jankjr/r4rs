@@ -261,10 +261,10 @@ function peg$parse(input, options) {
       peg$c92 = peg$otherExpectation("boolean"),
       peg$c93 = "#t",
       peg$c94 = peg$literalExpectation("#t", false),
-      peg$c95 = function() { return make("boolean", true) },
+      peg$c95 = function() { return True },
       peg$c96 = "#f",
       peg$c97 = peg$literalExpectation("#f", false),
-      peg$c98 = function() { return make("boolean", false) },
+      peg$c98 = function() { return False },
       peg$c99 = peg$otherExpectation("sign number"),
       peg$c100 = function(s, n) {
         if (s) {
@@ -1563,11 +1563,15 @@ function peg$parse(input, options) {
   }
 
 
-    const make = (type, value) => ({ type, value })
-    const pair = (a, b) => make("pair", [a, b])
-    const nil = make("null", null);
-    const symbol = name => make("symbol", name)
-    const list = (entries, first=nil) => entries.reduceRight((l, r) => pair(r, l), first)
+    const{
+      make,
+      pair,
+      nil,
+      symbol,
+      list,
+      True,
+      False
+    } = require("./types");
     const desugar = (t, e) => list([symbol(t), e])
 
 
