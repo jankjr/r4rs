@@ -59,6 +59,20 @@ const cdr = exp => assertPair(exp) && exp.value[1];
 const cdar = exp => car(cdr(exp))
 
 const prelude = new Env();
+
+const toList = exp => {
+  assertPair(exp);
+  let out = [];
+  while(isPair(exp)) {
+    out.push(car(exp));
+    exp = cdr(exp);
+  }
+  if (isNil(exp)) {
+    return out;
+  }
+  throw new Error("Bad list")
+}
+
 const makeOp = (fn, id, opName) => {
   return make("native-procedure", args => {
     return jsValToScmVal(args.reduce((l, r) => {
@@ -69,23 +83,6 @@ const makeOp = (fn, id, opName) => {
     }, id));
   })
 }
-const toList = exp => {
-  assertPair(exp);
-  let out = [];
-  for(;;) {
-    const v = car(exp);
-    out.push(v),
-    exp = cdr(exp);
-    if (!isPair(exp)) {
-      break;
-    }
-  }
-  if (isNil(exp)) {
-    return out;
-  }
-  throw new Error("Bad list")
-}
-
 const makeRelatonalOp = (fn, op) => makeNative(args => {
   for (var i = 0; i < args.length; i++) {
     if (!isNumber(args[i])) throw new Error(op + " only works for numbers");
@@ -275,7 +272,7 @@ Object.assign(prelude.scope, {
     if (k.value === 10) return jsValToScmVal(parseFloat(v.value));
     return jsValToScmVal(parseInt(v.value, k.value));
   }, 1, 2),
-  "apply": make("native-procedure", (args, callEnv) => {
+  apply: make("native-procedure", (args, callEnv) => {
     const fn = args[0];
     assert(isProcedure(fn), "first arg of apply must be procedure");
     if (args.length === 2 && isPair(args[1])) {
@@ -306,7 +303,48 @@ Object.assign(prelude.scope, {
       }
     }
     return evalSExp(body, newEnv, true);
-  }, 2)
+  }, 2),
+  map: make("native-procedure", (args, env) => {
+    assert(args.length >= 2, "map takes at least two args");
+    const proc = args[0];
+    assert(isProcedure(proc), "map takes a proc as first argument");
+    const argArrs = [];
+    for (let i = 1; i < args.length; i++) {
+      const arr = toList(args[i]);
+      argArrs.push(arr);
+      if (i !== 1) {
+        assert(argArrs[0].length === arr.length, "all inputs to map must have same lenght");
+      }
+    }
+    let out = [];
+    for (var i = 0; i < argArrs[0].length; i++) {
+      let zipped = [proc];
+      for (var j = 0; j < argArrs.length; j++) {
+        zipped.push(argArrs[j][i]);
+      }
+      out.push(prelude.scope.apply.value(zipped, env));
+    }
+    return list(out);
+  }, 2, Infinity),
+  "for-each": make("native-procedure", (args, env) => {
+    assert(args.length >= 2, "for-each takes at least two args");
+    const proc = args[0];
+    assert(isProcedure(proc), "for-each takes a proc as first argument");
+    const argArrs = [];
+    for (let i = 1; i < args.length; i++) {
+      const arr = toList(args[i]);
+      argArrs.push(arr);
+      if (i !== 1) {
+        assert(argArrs[0].length === arr.length, "all inputs to for-each must have same lenght");
+      }
+    }
+    for (var i = 0; i < argArrs[0].length; i++) {
+      let zipped = [proc];
+      for (var j = 0; j < argArrs.length; j++) {
+        zipped.push(argArrs[j][i]);
+      }
+    }
+   }, 2, Infinity)
 })
 
 const makeProcedure = (formals, body, env) => {
