@@ -345,6 +345,59 @@ const makeProcedure = (formals, body, env) => {
 
 const isFalse = v => v.type === "boolean" && v.value === false;
 const syntacticKeywords = {
+  let: (exp, env) => {
+    const letDef = toList(exp);
+    if (letDef.length !== 2) throw new Error("Let takes at least two clauses");
+    const [
+      bindingsBlock,
+      body
+    ] = letDef;
+    const bindings = toList(bindingsBlock);
+    const subEnv = env.subscope();
+    const values = bindings.map(p => {
+      const name = car(p);
+      if (!isSymbol(name)) throw new Error("let binding clauses must have form (name init)");
+      return [name.value, evalSExp(car(cdr(p)), subEnv)];
+    }).forEach(([name, value]) => {
+      subEnv.define(name, value);
+    });
+    return evalSExp(body, subEnv, true);
+  },
+  "let*": (exp, env) => {
+    const letDef = toList(exp);
+    if (letDef.length !== 2) throw new Error("Let* takes at least two clauses");
+    const [
+      bindingsBlock,
+      body
+    ] = letDef;
+    const bindings = toList(bindingsBlock);
+    const subEnv = env.subscope();
+    bindings.forEach(p => {
+      const name = car(p);
+      if (!isSymbol(name)) throw new Error("let binding clauses must have form (name init)");
+      subEnv.define(name.value, evalSExp(car(cdr(p)), subEnv));
+    });
+    return evalSExp(body, subEnv, true);
+  },
+  "letrec": (exp, env) => {
+    const letDef = toList(exp);
+    if (letDef.length !== 2) throw new Error("Let* takes at least two clauses");
+    const [
+      bindingsBlock,
+      body
+    ] = letDef;
+    const bindings = toList(bindingsBlock);
+    const subEnv = env.subscope();
+    bindings.forEach(p => {
+      const name = car(p);
+      if (!isSymbol(name)) throw new Error("let binding clauses must have form (name init)");
+      subEnv.define(name.value, nil);
+    });
+    bindings.forEach(p => {
+      subEnv.set(car(p).value, evalSExp(car(cdr(p)), subEnv));
+    });
+    return evalSExp(body, subEnv, true);
+  },
   quote: (exp, env) => exp.value[0],
   delay: (exp, env) => {
     let res = null;
