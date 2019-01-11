@@ -12,8 +12,8 @@ const { isPair, isFalse, isVector, isProcedure, isNative, isSymbol, isString, is
   False
  } = require("./types");
 const { Env } = require("./Env");
-
 const Zero = make("int", 0);
+
 
 const jsValToScmVal = v => {
   const t = typeof v;
@@ -60,9 +60,26 @@ const car = exp => assertPair(exp) && exp.value[0];
 const cdr = exp => assertPair(exp) && exp.value[1];
 const cdar = exp => car(cdr(exp))
 
+const listEach = (exp, fn) => {
+  let i = 0;
+  while(isPair(exp)) {
+    fn(car(exp), i);
+    i += 1;
+    exp = cdr(exp);
+  }
+  if (!isNil(exp)) throw new Error("Invalid list");
+}
+const listMap = (exp, fn) => {
+  let out = [];
+  listEach(exp, (v, i) => out.push(fn(v, i)));
+  return out;
+}
+
+
 const prelude = new Env();
 
 const toList = exp => {
+  if (isNil(exp)) return [];
   assertPair(exp);
   let out = [];
   while(isPair(exp)) {
@@ -103,6 +120,206 @@ class Continuation extends Error {
     this.args = args;
   }
 }
+
+const letExp = (definitions, ...body) => list([
+  symbol("let"),
+  list(definitions.map(
+    ([name, init]) => list([
+      symbol(name), init
+    ])
+  )),
+  ...body
+]);
+
+const ifExp = (test, then, elseExp) => list([
+  symbol("if"),
+  test,
+  then,
+  elseExp
+]);
+
+const callExp = (exp, ...args) => list([
+  exp,
+  ...args
+]);
+
+const lambdaExp = (args, ...body) => list([
+  symbol("lambda"),
+  list(args.map(symbol)),
+  ...body
+]);
+
+Object.assign(prelude.syntaxRules, {
+  cond: exp => {
+    if (isNil(exp)) return nil;
+    if (!isPair(exp)) throw new Error("Invalid cond claus");
+    const claus1 = car(exp);
+    const claus2 = cdr(exp);
+    const claus1Exps = toList(claus1);
+    if (claus1Exps.length === 0) return nil;
+    if (claus1Exps.length === 1) {
+      return list([
+        symbol("or"),
+        claus1,
+        list([
+          symbol("cond"),
+          ...toList(claus2)
+        ])
+      ]);
+    }
+    if (claus1Exps.length === 2) {
+      const [test, then] = claus1Exps;
+      if (isSymbol(test) && test.value === "else") {
+        return pair(
+           symbol("begin"),
+           pair(then, nil)
+        )
+      }
+      return ifExp(
+        test,
+        pair(
+           symbol("begin"),
+           pair(then, nil)
+        ),
+        list([
+          symbol("cond"),
+          ...toList(claus2)
+        ])
+      )
+    }
+    if (claus1Exps.length === 3) {
+      const [test, arrow, recipient] = claus1Exps;
+      if (!(isSymbol(arrow) && arrow.value === "=>")) {
+        throw new Error("Invalid cond clause");
+      }
+      return letExp([
+          ["test-result", test],
+          ["thunk2", lambdaExp([], recipient)],
+          ["thunk3", lambdaExp([], pair(
+            symbol("cond"),
+            pair(claus2, nil)
+          ))]
+        ],
+        ifExp(symbol("test-result"),
+          callExp(callExp(symbol("thunk2")), symbol("test-result")),
+          callExp(symbol("thunk3"))
+        )
+      );
+    }
+    throw new Error("Invalid cond claus " + claus1Exps.length);
+  },
+  and: exp => {
+    const exps = toList(exp);
+    if (exps.length === 0) return True;
+    let out = letExp([
+      ["test", exps[exps.length - 1]]
+    ], ifExp(
+      symbol("test"),
+      symbol("test"),
+      False
+    ));
+    for (var i = exps.length - 2; i >= 0; i--) {
+      out = ifExp(exps[i], out, False);
+    }
+    return out;
+  },
+  or: exp => {
+    const exps = toList(exp);
+    if (exps.length === 0) return True;
+    let out = letExp([
+      ["test", exps[exps.length - 1]]
+    ], ifExp(
+      symbol("test"),
+      symbol("test"),
+      False
+    ));
+    for (var i = exps.length - 2; i >= 0; i--) {
+      out =letExp([
+        ["test", exps[i]]
+      ], ifExp(
+        symbol("test"),
+        symbol("test"),
+        out
+      ));
+    }
+    return out;
+  },
+  begin: exp => {
+    return list([
+      list([
+        symbol("lambda"),
+        nil,
+        ...toList(exp)
+      ]),
+    ]);
+  },
+  "letrec": exp => {
+    const formals = car(exp);
+    const body = toList(cdr(exp));
+    const args = [];
+    const nilApp = [];
+    const intExps = [];
+    listEach(formals, exp => {
+      const [name, val] = toList(exp);
+      args.push(name);
+      nilApp.push(nil);
+      intExps.push(list([
+        symbol("set!"),
+        name,
+        val
+      ]));
+    });
+    return list([
+      list([
+        symbol("lambda"),
+        list(args),
+        ...intExps,
+        ...toList(cdr(exp))
+      ]),
+      ...nilApp
+    ]);
+  },
+  "let*": exp => {
+    const formals = car(exp);
+    const body = toList(cdr(exp));
+    const defineStms = [];
+    listEach(formals, exp => {
+      const [name, val] = toList(exp);
+      defineStms.push(list([
+        symbol("define"),
+        name,
+        val
+      ]));
+    });
+    return pair(list([
+      symbol("lambda"),
+      nil,
+      ...defineStms,
+      ...toList(cdr(exp))
+    ]), nil)
+  },
+  let: exp => {
+    const definitions = car(exp);
+    const formals = [];
+    const args = [];
+    listEach(definitions, exp => {
+      const symbol = car(exp);
+      const val = car(cdr(exp));
+      formals.push(symbol);
+      args.push(val);
+    });
+    const body = pair(symbol("begin"), cdr(exp));
+    return list([
+      list([
+        symbol("lambda"),
+        list(formals),
+        body
+      ]),
+      ...args
+    ])
+  }
+});
+
 const exitOperator = make("native-procedure", (args, env) => { throw new Continuation(args); });
 Object.assign(prelude.scope, {
   // "eqv?"
@@ -176,6 +393,7 @@ Object.assign(prelude.scope, {
       }
     }
   }, 1),
+  vector: make("native-procedure", (args, env) => make("vector", args)),
   "vector?": wrapPred(isVector),
   "force": makeNative(v => {
     assertType(v, "native-procedure");
@@ -378,61 +596,13 @@ const makeProcedure = (formals, body, env) => {
   }
 
   return {
-    body,
+    body: toList(body),
     env,
     params
   }
 }
 
-
 const syntacticKeywords = {
-  let: (exp, env) => {
-    const letDef = toList(exp);
-    if (letDef.length < 2) throw new Error("Let takes at least two clauses");
-    const bindingsBlock = letDef[0];
-    const bindings = toList(bindingsBlock);
-    const subEnv = env.subscope();
-    const values = bindings.map(p => {
-      const name = car(p);
-      if (!isSymbol(name)) throw new Error("let binding clauses must have form (name init)");
-      return [name.value, evalSExp(car(cdr(p)), subEnv)];
-    }).forEach(([name, value]) => {
-      subEnv.define(name, value);
-    });
-    for (var i = 1; i < letDef.length-1; i++) evalSExp(letDef[i], subEnv, false);
-    return evalSExp(letDef[letDef.length - 1], subEnv, true);
-  },
-  "let*": (exp, env) => {
-    const letDef = toList(exp);
-    if (letDef.length < 2) throw new Error("let* takes at least two clauses");
-    const bindingsBlock = letDef[0];
-    const bindings = toList(bindingsBlock);
-    const subEnv = env.subscope();
-    bindings.forEach(p => {
-      const name = car(p);
-      if (!isSymbol(name)) throw new Error("let* binding clauses must have form (name init)");
-      subEnv.define(name.value, evalSExp(car(cdr(p)), subEnv));
-    });
-    for (var i = 1; i < letDef.length-1; i++) evalSExp(letDef[i], subEnv, false);
-    return evalSExp(letDef[letDef.length - 1], subEnv, true);
-  },
-  "letrec": (exp, env) => {
-    const letDef = toList(exp);
-    if (letDef.length < 2) throw new Error("letrec takes at least two clauses");
-    const bindingsBlock = letDef[0];
-    const bindings = toList(bindingsBlock);
-    const subEnv = env.subscope();
-    bindings.forEach(p => {
-      const name = car(p);
-      if (!isSymbol(name)) throw new Error("letrec binding clauses must have form (name init)");
-      subEnv.define(name.value, nil);
-    });
-    bindings.forEach(p => {
-      subEnv.set(car(p).value, evalSExp(car(cdr(p)), subEnv));
-    });
-    for (var i = 1; i < letDef.length-1; i++) evalSExp(letDef[i], subEnv, false);
-    return evalSExp(letDef[letDef.length - 1], subEnv, true);
-  },
   quote: (exp, env) => exp.value[0],
   delay: (exp, env) => {
     let res = null;
@@ -451,37 +621,10 @@ const syntacticKeywords = {
       'procedure',
       makeProcedure(
         car(exp),
-        car(cdr(exp)),
+        cdr(exp),
         env
       )
     );
-  },
-  vector: (exp, env) => make("vector", toList(exp).map(v => evalSExp(v, env))),
-  and: (exp, env) => {
-    const terms = toList(exp);
-    if (terms.length <= 1) {
-      throw new Error("Invalid number of clauses in 'and' clause");
-    }
-    for (var i = 0; i < terms.length; i++) {
-      const firstTerm = evalSExp(terms[i], env, false);
-      if (isFalse(firstTerm)) {
-        return jsValToScmVal(false);
-      }
-    }
-    return jsValToScmVal(true);
-  },
-  or: (exp, env) => {
-    const terms = toList(exp);
-    if (terms.length <= 1) {
-      throw new Error("Invalid number of clauses in 'and' clause");
-    }
-    for (var i = 0; i < terms.length; i++) {
-      const firstTerm = evalSExp(terms[i], env, false);
-      if (!isFalse(firstTerm)) {
-        return jsValToScmVal(true);
-      }
-    }
-    return jsValToScmVal(false);
   },
   "set!": (exp, env) => {
     const l = toList(exp);
@@ -494,13 +637,6 @@ const syntacticKeywords = {
     const v = evalSExp(value, env, false);
     env.set(name.value, v);
     return v;
-  },
-  begin: (exp, env, tailPosition) => {
-    const exps = toList(exp);
-    for (var i = 0; i < exps.length - 1; i++) {
-      evalSExp(exps[i], env, false);
-    }
-    return evalSExp(exps[exps.length - 1], env, tailPosition);
   },
   if: (exp, env, tailPosition) => {
     const li = toList(exp);
@@ -516,7 +652,6 @@ const syntacticKeywords = {
   },
   define: (exp, env) => {
     const head = car(exp);
-    const expression = cdar(exp);
     if (isPair(head)) {
       // define procedure
       const name = car(head);
@@ -525,14 +660,14 @@ const syntacticKeywords = {
           'procedure',
           makeProcedure(
             cdr(head),
-            expression,
+            cdr(exp),
             env
           )
         )
       );
     } else if (isSymbol(head)) {
       // define variable
-      env.define(head.value, evalSExp(expression, env, false));
+      env.define(head.value, evalSExp(car(cdr(exp)), env, false));
     }
     return undefined;
   }
@@ -556,7 +691,11 @@ const evalProcedure = ({ body, params, env }, xs, callEnv) => {
       throw new Error(`Invalid parameter length expected ${params.formals.length} got ${argArr.length}`);
     }
   }
-  return evalSExp(body, newEnv, true);
+  let out = null;
+  body.forEach((exp, i) => {
+    out = evalSExp(exp, newEnv, i === body.length - 1)
+  });
+  return out;
 }
 
 const evalSExp = (exp, env, tailPosition=false) => {
@@ -607,20 +746,32 @@ const printExp = exp => {
     case "vector": return `[${exp.value.map(printExp).join(", ")}]`
   }
 }
+const desugar = (exp, env) => {
+  if (!isPair(exp)) return exp;
+  let [x, xs] = exp.value
+  xs = desugar(xs, env);
+  if (!isSymbol(x)) {
+    return pair(desugar(x, env), xs);
+  }
+  const rule = env.lookupSyntaxRule(x.value);
+  if (rule) return desugar(rule(xs, env), env);
+  return pair(x, desugar(xs, env));
+}
 
-const REPL_BANNER = `R4rsjs Interpreter version 0.1 🎉
-Copyright ©️  2019 Jan Kjærgaard`;
 const repl = () => {
   const env = new Env(prelude);
-  console.log(REPL_BANNER);
+  console.log(`R4rsjs Interpreter version 0.1 🎉\nCopyright ©️  2019 Jan Kjærgaard`);
   const repl = require('repl');
   const r = repl.start({ prompt: '> ', eval: evalCmd, writer: myWriter });
   function evalCmd(cmd, context, filename, callback) {
     const exps = grammar.parse(cmd);
+
     let result = null;
     try {
       exps.forEach(exp => {
-        result = evalSExp(exp, env);
+        const desugared = desugar(exp, env);
+        console.log(printExp(desugared));
+        result = evalSExp(desugared, env);
       });  
     } catch(e) {
       console.error(e);

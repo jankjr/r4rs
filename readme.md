@@ -29,3 +29,9 @@ $ node src/eval.js
 3628800
 >
 ```
+
+# Todo
+
+  1. Macros
+  2. Remainder of the standard standard lib
+  3. Proper number tower

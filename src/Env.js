@@ -4,6 +4,14 @@ class Env {
   constructor(parent) {
     this.parent = parent;
     this.scope = {};
+    this.syntaxRules = {};
+  }
+  lookupSyntaxRule(name) {
+    if (name in this.syntaxRules) {
+      return this.syntaxRules[name];
+    }
+    if (this.parent) return this.parent.lookupSyntaxRule(name);
+    return null;
   }
   lookup(name) {
     if (name in this.scope) {
@@ -19,8 +27,11 @@ class Env {
     if (k in this.scope) {
       this.scope[k] = v;
     }
-    if (this.parent) this.parent.set(k, v);
-    throw new Error(name + " is not defined");
+    else if (this.parent) {
+      this.parent.set(k, v);
+    } else {
+      throw new Error(k + " is not defined");  
+    }
   }
   subscope() {
     return new Env(this);
