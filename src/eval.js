@@ -2,7 +2,7 @@
  * This is the scheme interpreter
  */
 const grammar = require('./grammar.js')
-const { isPair, isFalse, isVector, isProcedure, isNative, isSymbol, isString, isBoolean, isNil, isChar, isNumber,
+const { isPair, isFalse, isVector, isProcedure, isPort, isNative, isSymbol, isString, isBoolean, isNil, isChar, isNumber,
   make,
   pair,
   nil,
@@ -28,6 +28,72 @@ const jsValToScmVal = v => {
     case "number": return v === 0 ? Zero : make("float", v);
     case "boolean": return v === true ? True : False;
     case "string": return make("string", v);
+  }
+}
+
+const printExp = exp => {
+  if (!exp) return "(undefined)"
+  switch(exp.type) {
+    case "boolean":
+      if (exp.value) return chalk.red("#t");
+      else return chalk.red("#f");
+    case "char":
+      return chalk.green("#\\" + exp.value);
+    case "float":
+    case "port": return chalk.blue(`[port ${exp.value.name}]`);
+    case "int": return chalk.yellow(exp.value.toString());
+    case "string": return chalk.green(`"${exp.value}"`);
+    case "symbol": return exp.value;
+    case "procedure":
+      if (exp.value.name) {
+        return chalk.red(`[procedure ${exp.value.name}]`);
+      }
+      return chalk.red("[procedure]");
+    case "native-procedure": return chalk.red("[native-procedure]");
+    case "pair":
+      let res = [];
+      while(isPair(exp)) {
+        res.push(printExp(car(exp)));
+        exp = cdr(exp);
+      }
+      if (isNil(exp)) {
+        return `(${res.join(" ")})`
+      }
+      return `(${res.join(" ")} . ${printExp(exp)})`
+    case "null": return "()"
+    case "vector": return `#(${exp.value.map(printExp).join(" ")})`
+  }
+}
+const expToString = exp => {
+  if (!exp) return "(undefined)"
+  switch(exp.type) {
+    case "boolean":
+      if (exp.value) return "#t";
+      else return "#f";
+    case "char":
+      return "#\\" + exp.value;
+    case "float":
+    case "int": return exp.value.toString();
+    case "string": return `"${exp.value}"`;
+    case "symbol": return exp.value;
+    case "procedure":
+      if (exp.value.name) {
+        return `[procedure ${exp.value.name}]`;
+      }
+      return "[procedure]";
+    case "native-procedure": return "[native-procedure]";
+    case "pair":
+      let res = [];
+      while(isPair(exp)) {
+        res.push(expToString(car(exp)));
+        exp = cdr(exp);
+      }
+      if (isNil(exp)) {
+        return `(${res.join(" ")})`
+      }
+      return `(${res.join(" ")} . ${expToString(exp)})`
+    case "null": return "()"
+    case "vector": return `#(${exp.value.map(expToString).join(" ")})`
   }
 }
 const makeNative = (fn, minArgC, maxArgC=minArgC) => make("native-procedure", args => {
@@ -248,11 +314,11 @@ Object.assign(prelude.scope, {
   ceiling: makeNative(v => (assert(isNumber(v), "ceiling expects number"), jsValToScmVal(Math.ceil(v.value))), 1), 
   round: makeNative(v => (assert(isNumber(v), "ceiling expects number"), jsValToScmVal(Math.round(v.value))), 1),
   // "truncate"
-  "number-string":makeNative((v, k) => {
+  "number->string":makeNative((v, k) => {
     assert(isNumber(v), "number->string expects number")
-    if (!k) return jsValToScmVal(v.toString());
+    if (!k) return jsValToScmVal(v.value.toString());
     assert(isNumber(k), "number->string radiux must be a number")
-    return jsValToScmVal(v.toString(k.value));
+    return jsValToScmVal(v.value.toString(k.value));
   }, 1, 2),
   "string->number": makeNative((v, k) => {
     assertType(v, "string");
@@ -260,6 +326,49 @@ Object.assign(prelude.scope, {
     assert(isNumber(k), "string->number radix must be number");
     if (k.value === 10) return jsValToScmVal(parseFloat(v.value));
     return jsValToScmVal(parseInt(v.value, k.value));
+  }, 1, 2),
+  "output-port?": makeNative(port => {
+    assertType(port, "port");
+    return port.value.output;
+  }, 1),
+  "close-output-file": makeNative(port => {
+    assertType(port, "port");
+  }, 1),
+  "open-output-file": makeNative(fileName => {
+    assertType(fileName, "string");
+    let f = null;
+    let err = null;
+    let open = false;
+    let output = true;
+    fs.open(fileName.value, "w", (e, file) => {
+      if (e) {
+        console.error(e);
+        err = e;
+      }
+      f = file;
+      open = e === null;
+    })
+    return make("port", {
+      name: fileName.value,
+      write: str => {
+        if (!output) throw new Error("not output port");
+        if (!open) throw new Error("port closed");
+        fs.write(f, str, err => {
+          if (err) {
+            console.error(err);
+          }
+        })
+      }
+    })
+  }, 1),
+  display: makeNative((exp, port) => {
+    if (!port) {
+      console.log(printExp(exp));
+    } else {
+      if (!isPort(port)) throw new Error("2nd argument for display must be port");
+      port.value.write(expToString(exp));
+    }
+    return undefined;
   }, 1, 2),
   apply: make("native-procedure", (args, callEnv) => {
     const fn = args[0];
@@ -480,38 +589,6 @@ const evalSExp = (exp, env, tailPosition=false) => {
   return evalProcedure(x.value, xs, env);
 }
 
-const printExp = exp => {
-  if (!exp) return "(undefined)"
-  switch(exp.type) {
-    case "boolean":
-      if (exp.value) return chalk.red("#t");
-      else return chalk.red("#f");
-    case "char":
-      return chalk.green("#\\" + exp.value);
-    case "float":
-    case "int": return chalk.yellow(exp.value.toString());
-    case "string": return chalk.green(`"${exp.value}"`);
-    case "symbol": return exp.value;
-    case "procedure":
-      if (exp.value.name) {
-        return chalk.red(`[procedure ${exp.value.name}]`);
-      }
-      return chalk.red("[procedure]");
-    case "native-procedure": return chalk.red("[native-procedure]");
-    case "pair":
-      let res = [];
-      while(isPair(exp)) {
-        res.push(printExp(car(exp)));
-        exp = cdr(exp);
-      }
-      if (isNil(exp)) {
-        return `(${res.join(" ")})`
-      }
-      return `(${res.join(" ")} . ${printExp(exp)})`
-    case "null": return "()"
-    case "vector": return `#(${exp.value.map(printExp).join(" ")})`
-  }
-}
 const desugar = (exp, env) => {
   if (!isPair(exp)) return exp;
   let [x, xs] = exp.value
