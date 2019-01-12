@@ -20,7 +20,8 @@ const {
 const { Env } = require("./Env");
 const Zero = make("int", 0);
 const { builtInRules } = require("./preludeSyntaxRules");
-
+const fs = require("fs");
+const chalk = require('chalk');
 const jsValToScmVal = v => {
   const t = typeof v;
   switch(t) {
@@ -167,10 +168,6 @@ Object.assign(prelude.scope, {
   }, 1),
   vector: make("native-procedure", (args, env) => make("vector", args)),
   "vector?": wrapPred(isVector),
-  "force": makeNative(v => {
-    assertType(v, "native-procedure");
-    return v.value();
-  }, 1),
   "vector-set!": makeNative((v, k, o) => {
     assertType(v, "vector");
     if (!isNumber(k)) {
@@ -340,7 +337,7 @@ Object.assign(prelude.scope, {
    }, 2, Infinity)
 })
 
-const makeProcedure = (formals, body, env) => {
+const makeProcedure = (formals, body, env, name) => {
   const params = {
     formals: [],
     hasRest: false,
@@ -370,24 +367,13 @@ const makeProcedure = (formals, body, env) => {
   return {
     body: toList(body),
     env,
-    params
+    params,
+    name
   }
 }
 
 const syntacticKeywords = {
   quote: (exp, env) => exp.value[0],
-  delay: (exp, env) => {
-    let res = null;
-    return make(
-      'native-procedure',
-      () => {
-        if (res === null) {
-          res = evalSExp(car(exp), env, true);
-        }
-        return res;
-      }
-    )
-  },
   lambda: (exp, env) => {
     return make(
       'procedure',
@@ -433,7 +419,8 @@ const syntacticKeywords = {
           makeProcedure(
             cdr(head),
             cdr(exp),
-            env
+            env,
+            name.value
           )
         )
       );
@@ -497,13 +484,20 @@ const printExp = exp => {
   if (!exp) return "(undefined)"
   switch(exp.type) {
     case "boolean":
+      if (exp.value) return chalk.red("#t");
+      else return chalk.red("#f");
+    case "char":
+      return chalk.green("#\\" + exp.value);
     case "float":
-    case "int": return exp.value.toString();
-    case "string": return `"${exp.value}"`;
+    case "int": return chalk.yellow(exp.value.toString());
+    case "string": return chalk.green(`"${exp.value}"`);
     case "symbol": return exp.value;
-    case "char": return `'${exp.value}'`;
-    case "procedure": return "[procedure]";
-    case "native-procedure": return "[native-procedure]";
+    case "procedure":
+      if (exp.value.name) {
+        return chalk.red(`[procedure ${exp.value.name}]`);
+      }
+      return chalk.red("[procedure]");
+    case "native-procedure": return chalk.red("[native-procedure]");
     case "pair":
       let res = [];
       while(isPair(exp)) {
@@ -514,8 +508,8 @@ const printExp = exp => {
         return `(${res.join(" ")})`
       }
       return `(${res.join(" ")} . ${printExp(exp)})`
-    case "null": return "()";
-    case "vector": return `[${exp.value.map(printExp).join(", ")}]`
+    case "null": return "()"
+    case "vector": return `#(${exp.value.map(printExp).join(" ")})`
   }
 }
 const desugar = (exp, env) => {
@@ -530,8 +524,14 @@ const desugar = (exp, env) => {
   return pair(x, desugar(xs, env));
 }
 
+const path = require("path");
 const repl = () => {
   const env = new Env(prelude);
+  const preludeSrc = fs.readFileSync(path.join(__dirname, "prelude.scm"), "utf-8");
+  grammar.parse(preludeSrc).forEach(exp => {
+    evalSExp(desugar(exp, env), env);
+  });
+
   console.log(`R4rsjs Interpreter version 0.1 🎉\nCopyright ©️  2019 Jan Kjærgaard`);
   const repl = require('repl');
   const r = repl.start({ prompt: '> ', eval: evalCmd, writer: myWriter });

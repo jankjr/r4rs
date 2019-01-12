@@ -46,6 +46,12 @@ const lambdaExp = (args, ...body) => list([
 ]);
 
 const builtInRules = {
+  delay: exp => {
+    return callExp(
+      symbol("make-promise"),
+      lambdaExp([], ...toList(exp))
+    );
+  },
   cond: exp => {
     if (isNil(exp)) return nil;
     if (!isPair(exp)) throw new Error("Invalid cond claus");
