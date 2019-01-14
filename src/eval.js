@@ -456,14 +456,14 @@ const makeProcedure = (formals, body, env, name) => {
   let formalsArr = formals
   while(isPair(formalsArr)) {
     const v = car(formalsArr);
-    if (!isSymbol(v) && v.value in syntacticKeywords) {
+    if (!isSymbol(v) && v.value in syntaxticForms) {
       throw new Error("Invalid formals definition, expected symbol got " + v.type);
     }
     params.formals.push(v.value);
     formalsArr = cdr(formalsArr);
   }
   if (isSymbol(formalsArr)) {
-    if (formalsArr.value in syntacticKeywords) {
+    if (formalsArr.value in syntaxticForms) {
       throw new Error("Rest arg cannot have name " + v.value);
     }
     params.hasRest = true;
@@ -481,7 +481,31 @@ const makeProcedure = (formals, body, env, name) => {
   }
 }
 
-const syntacticKeywords = {
+// Base syntax forms
+const syntaxticForms = {
+  unquote: () => {throw new Error("Invalid unquote")},
+  "unquote-splicing": () => {throw new Error("Invalid unquote-splicing")},
+  quasiquote: (exp, env) => {
+    if (!pair(exp)) return exp;
+    let out = [];
+    listEach(exp, e => {
+      if (!pair(e)) return out.push(e);
+      const [x, xs] = e.value;
+      if (!isSymbol(x)) return out.push(e);
+      if (x === "unquote") {
+        out.push(evalSExp(xs, env));
+      } else if (x === "unquote-splicing") {
+        const e = evalSExp(xs, env);
+        if (isNil(e)) return;
+        if (!isPair(e)) throw new Error("Unquote-splicing applied to non list");
+        out = out.concat(toList(e));
+      } else {
+        out.push(e);
+      }
+    })
+    return list(out);
+  },
+
   quote: (exp, env) => exp.value[0],
   lambda: (exp, env) => {
     return make(
@@ -499,7 +523,7 @@ const syntacticKeywords = {
       throw new Error("set! must have 2 clauses");
     }
     const [name, value] = l;
-    if (!isSymbol(name) || name.value in syntacticKeywords)
+    if (!isSymbol(name) || name.value in syntaxticForms)
       throw new Error("invalid id applied to set")
     const v = evalSExp(value, env, false);
     env.set(name.value, v);
@@ -516,6 +540,14 @@ const syntacticKeywords = {
     }
     if (li[2]) return evalSExp(li[2], env, tailPosition);
     return undefined
+  },
+  "define-syntax": (exp, env) => {
+    assertType(exp, "pair");
+    const [ tag, body ] = exp.value;
+    assertType(tag, "symbol");
+    assertType(body, "pair");
+    const [ formals, rules ] = exp.value;
+
   },
   define: (exp, env) => {
     const head = car(exp);
@@ -576,8 +608,8 @@ const evalSExp = (exp, env, tailPosition=false) => {
     return exp;
   }
   let [x, xs] = exp.value;
-  if (isSymbol(x) && x.value in syntacticKeywords) {
-    return syntacticKeywords[x.value](xs, env, tailPosition);
+  if (isSymbol(x) && x.value in syntaxticForms) {
+    return syntaxticForms[x.value](xs, env, tailPosition);
   }
   x = evalSExp(x, env, tailPosition);
   if (!isProcedure(x)) {
@@ -589,25 +621,23 @@ const evalSExp = (exp, env, tailPosition=false) => {
   return evalProcedure(x.value, xs, env);
 }
 
-const desugar = (exp, env) => {
+const expand = (exp, env) => {
   if (!isPair(exp)) return exp;
   let [x, xs] = exp.value
-  xs = desugar(xs, env);
+  xs = expand(xs, env);
   if (!isSymbol(x)) {
-    return pair(desugar(x, env), xs);
+    return pair(expand(x, env), xs);
   }
   const rule = env.lookupSyntaxRule(x.value);
-  if (rule) return desugar(rule(xs, env), env);
-  return pair(x, desugar(xs, env));
+  if (rule) return expand(rule(xs, env), env);
+  return pair(x, expand(xs, env));
 }
 
 const path = require("path");
 const repl = () => {
   const env = new Env(prelude);
   const preludeSrc = fs.readFileSync(path.join(__dirname, "prelude.scm"), "utf-8");
-  grammar.parse(preludeSrc).forEach(exp => {
-    evalSExp(desugar(exp, env), env);
-  });
+  grammar.parse(preludeSrc).forEach(exp => evalSExp(expand(exp, env), env));
 
   console.log(`R4rsjs Interpreter version 0.1 🎉\nCopyright ©️  2019 Jan Kjærgaard`);
   const repl = require('repl');
@@ -618,7 +648,7 @@ const repl = () => {
     let result = null;
     try {
       exps.forEach(exp => {
-        const desugared = desugar(exp, env);
+        const desugared = expand(exp, env);
         // console.log(printExp(desugared));
         result = evalSExp(desugared, env);
       });  

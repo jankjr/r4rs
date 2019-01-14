@@ -1,6 +1,6 @@
 // predicates for distinct types
 
-const make = (type, value) => ({ type, value });
+const make = (type, value, phase) => phase ? ({ type, value, phase }) : ({ type, value });
 const pair = (a, b) => make("pair", [a, b]);
 const nil = make("null", null);
 module.exports.make = make
@@ -8,7 +8,7 @@ module.exports.True = make("boolean", true);
 module.exports.False = make("boolean", false);
 module.exports.pair = pair
 module.exports.nil = nil;
-module.exports.symbol = name => make("symbol", name)
+module.exports.symbol = (name, level=0) => make("symbol", name)
 module.exports.list = (entries, first = nil) => entries.reduceRight((l, r) => pair(r, l), first)
 module.exports.isPair = exp => exp.type === "pair";
 module.exports.isVector = exp => exp.type === "vector";
