@@ -31,7 +31,7 @@ const jsValToScmVal = v => {
   }
 }
 
-const printExp = exp => {
+const printExp = (exp, top=true) => {
   if (!exp) return "(undefined)"
   switch(exp.type) {
     case "boolean":
@@ -42,7 +42,7 @@ const printExp = exp => {
     case "port": return chalk.blue(`[port ${exp.value.name}]`);
     case "float":
     case "int": return chalk.yellow(exp.value.toString());
-    case "string": return chalk.green(`"${exp.value}"`);
+    case "string": return !top ? chalk.green(`"${exp.value}"`) : exp.value;
     case "symbol": return exp.value;
     case "procedure":
       if (exp.value.name) {
@@ -53,15 +53,15 @@ const printExp = exp => {
     case "pair":
       let res = [];
       while(isPair(exp)) {
-        res.push(printExp(car(exp)));
+        res.push(printExp(car(exp), false));
         exp = cdr(exp);
       }
       if (isNil(exp)) {
         return `(${res.join(" ")})`
       }
-      return `(${res.join(" ")} . ${printExp(exp)})`
+      return `(${res.join(" ")} . ${printExp(exp, false)})`
     case "null": return "()"
-    case "vector": return `#(${exp.value.map(printExp).join(" ")})`
+    case "vector": return `#(${exp.value.map(e => printExp(e, false)).join(" ")})`
   }
 }
 const expToString = exp => {
@@ -416,7 +416,7 @@ Object.assign(prelude.scope, {
   }, 1),
   display: makeNative((exp, port) => {
     if (!port) {
-      console.log(printExp(exp));
+      process.stdout.write(printExp(exp))
     } else {
       if (!isPort(port)) throw new Error("2nd argument for display must be port");
       port.value.write(expToString(exp));
@@ -506,24 +506,28 @@ const makeProcedure = (formals, body, env, name) => {
     restFrom: null,
     restArgName: null
   };
-  let formalsArr = formals
-  while(isPair(formalsArr)) {
-    const v = car(formalsArr);
-    if (!isSymbol(v) && v.value in syntaxticForms) {
-      throw new Error("Invalid formals definition, expected symbol got " + v.type);
+  if (isSymbol(formals)) {
+    params.formals.push(formals.value);
+  } else {
+    let formalsArr = formals
+    while(isPair(formalsArr)) {
+      const v = car(formalsArr);
+      if (!isSymbol(v) && v.value in syntaxticForms) {
+        throw new Error("Invalid formals definition, expected symbol got " + v.type);
+      }
+      params.formals.push(v.value);
+      formalsArr = cdr(formalsArr);
     }
-    params.formals.push(v.value);
-    formalsArr = cdr(formalsArr);
-  }
-  if (isSymbol(formalsArr)) {
-    if (formalsArr.value in syntaxticForms) {
-      throw new Error("Rest arg cannot have name " + v.value);
+    if (isSymbol(formalsArr)) {
+      if (formalsArr.value in syntaxticForms) {
+        throw new Error("Rest arg cannot have name " + v.value);
+      }
+      params.hasRest = true;
+      params.restFrom = params.formals.length;
+      params.restArgName = formalsArr.value;
+    } else if (!isNil(formalsArr)) {
+      throw new Error("Invalid rest arg type " + v.type);
     }
-    params.hasRest = true;
-    params.restFrom = params.formals.length;
-    params.restArgName = formalsArr.value;
-  } else if (!isNil(formalsArr)) {
-    throw new Error("Invalid rest arg type " + v.type);
   }
 
   return {
@@ -684,6 +688,21 @@ const expand = (exp, env) => {
   return pair(x, expand(xs, env));
 }
 
+const runTests = () => {
+  const env = new Env(prelude);
+  const preludeSrc = fs.readFileSync(path.join(__dirname, "prelude.scm"), "utf-8");
+  grammar.parse(preludeSrc).forEach(exp => evalSExp(expand(exp, env), env));
+
+  let testSrc = fs.readFileSync(path.join(__dirname, "tests/stdlib.scm"), "utf-8");
+  try {
+    grammar.parse(testSrc).forEach(exp => evalSExp(expand(exp, env), env));  
+  } catch(e) {
+    console.error(e);
+  }
+  
+
+}
+
 const path = require("path");
 const repl = () => {
   const env = new Env(prelude);
@@ -706,11 +725,13 @@ const repl = () => {
     } catch(e) {
       console.error(e);
     }
-    callback(null, printExp(result));
+    if (result !== undefined) callback(null, printExp(result));
+    else callback(null);
   }
   function myWriter(output) {
     return output;
   }
 }
 
-repl();
+runTests()
+// repl();

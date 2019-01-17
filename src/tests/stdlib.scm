@@ -1,0 +1,28 @@
+(define (test exp expecting)
+  (let ((result (eval exp)))
+    (if (not (equal? result expecting))
+      (begin
+        (display "FAIL: ")
+        (display exp)
+        (display " = ")
+        (display expecting)
+        (display " expected ")
+        (display result)
+        (display "\n"))
+      (begin
+        (display "OK: ")
+        (display exp)
+        (display "\n")))))
+
+; tests
+(test '(car '(a b)) 'a)
+(test '(cdr '(a b)) '(b))
+(test '(pair? '(a . b))  #t)
+(test '(pair? '(a b c))  #t)
+(test '(pair? '())       #f)
+(test '(pair? '#(a b))   #t)
+(test '(append '(x) '(y))       '(x y))
+(test '(append '(a) '(b c d))   '(a b c d))
+(test '(append '(a (b)) '((c))) '(a (b) (c)))
+(test '(reverse '(a b c))                     '(c b a))
+(test '(reverse '(a (b c) d (e (f))))         '((e (f)) d (b c) a))

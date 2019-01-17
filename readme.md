@@ -40,3 +40,4 @@ $ node src/eval.js
   2. Remainder of the standard standard lib
   3. Proper number tower
   4. Tail calls
+  5. bytecode compilation

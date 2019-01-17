@@ -72,6 +72,7 @@ StringChr "char"
  = [^\\"]
  / "\\\\" { return "\\" }
  / "\\\"" { return "\"" }
+ / "\\n" { return "\n" }
 
 Boolean "boolean"
   = "#t" { return True }
