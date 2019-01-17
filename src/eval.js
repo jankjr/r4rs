@@ -39,8 +39,8 @@ const printExp = exp => {
       else return chalk.red("#f");
     case "char":
       return chalk.green("#\\" + exp.value);
-    case "float":
     case "port": return chalk.blue(`[port ${exp.value.name}]`);
+    case "float":
     case "int": return chalk.yellow(exp.value.toString());
     case "string": return chalk.green(`"${exp.value}"`);
     case "symbol": return exp.value;
@@ -72,6 +72,7 @@ const expToString = exp => {
       else return "#f";
     case "char":
       return "#\\" + exp.value;
+    case "port": return `[port ${exp.value.name}]`;
     case "float":
     case "int": return exp.value.toString();
     case "string": return `"${exp.value}"`;
@@ -158,21 +159,73 @@ class Continuation extends Error {
 }
 
 Object.assign(prelude.syntaxRules, builtInRules);
-
+const isSameType = (a, b) => {
+  if (a.type !== b.type) {
+    if (isNumber(a) && isNumber(b)) return true;
+    if (isProcedure(a) && isProcedure(b)) return true;
+    return false;
+  }
+  return true;
+}
+const isEqv = (a, b) => a.value === b.value ? True : False;
+const isEqual = (a, b) => {
+  if (a.type === "vector") {
+    if (a.value === b.value) return True;
+    if (a.value.length !== b.value.length) return False;
+    for (let i = 0; i < a.value.length; i++) {
+      if (isEqual(a.value[i], b.value[i]) === False) return False;
+    }
+    return True;
+  }
+  if (a.type === "pair") {
+    if (a.value === b.value) return True;
+    if (isEqual(a.value[0], b.value[0]) === False) return False;
+    return isEqual(a.value[1], b.value[1]);
+  }
+  return isEqv(a, b);
+}
+const wrapEq = fn => make("native-procedure", args => {
+  if (args.length !== 2) throw new Error("Equivalence operators take two arguments");
+  const obj1 = args[0]
+  const obj2 = args[1]
+  if (!isSameType(obj1, obj2)) {
+    return False;
+  }
+  return fn(obj1, obj2);
+});
+const isStartOfListOrNull = exp => isPair(exp) || isNil(exp);
 const exitOperator = make("native-procedure", (args, env) => { throw new Continuation(args); });
+const makeAssoc = eqFn => makeNative((exp, alist) => {
+  if (isNil(exp)) return False;
+  while(isPair(alist)) {
+    const [x, xs] = alist.value;
+    if (!isPair(x)) throw new Error("Not list of pairs");
+    if (eqFn(exp, x.value[0]) === True) return x;
+    alist = xs;
+  }
+  if (isNil(alist)) return False;
+  throw new Error("Invalid list");
+}, 2)
 Object.assign(prelude.scope, {
-  // "eqv?"
-  // "eq?"
-  // "equal?"
-  // "append"
-  // "reverse"
-  // "list-ref"
   // "memq"
   // "memv"
   // "member"
-  // "assq"
-  // "assv"
-  // "assoc"
+  "eqv?": wrapEq(isEqv),
+  "eq?": wrapEq(isEqv),
+  "equal?": wrapEq(isEqual),
+  "append": makeNative((a, b) => list(toList(a), b), 2),
+  "reverse": makeNative(list => {
+    if (isNil(list)) return nil;
+    let out = nil;
+    listEach(list, exp => {
+      out = pair(exp, out);
+    });
+    return out;
+  }, 1),
+  // "list-ref"
+  "assv": makeAssoc(isEqv),
+  "assq": makeAssoc(isEqv),
+  "assoc": makeAssoc(isEqual),
   "pair?": wrapPred(isPair),
   "cons": makeNative(pair, 2),
   "length": makeNative(l => {
@@ -483,19 +536,19 @@ const makeProcedure = (formals, body, env, name) => {
 
 // Base syntax forms
 const syntaxticForms = {
-  unquote: () => {throw new Error("Invalid unquote")},
-  "unquote-splicing": () => {throw new Error("Invalid unquote-splicing")},
+  unquote: () => { throw new Error("Invalid unquote") },
+  "unquote-splicing": () => { throw new Error("Invalid unquote-splicing") },
   quasiquote: (exp, env) => {
-    if (!pair(exp)) return exp;
+    if (!isPair(exp)) return exp;
     let out = [];
-    listEach(exp, e => {
-      if (!pair(e)) return out.push(e);
+    listEach(exp.value[0], e => {
+      if (!isPair(e)) return out.push(e);
       const [x, xs] = e.value;
       if (!isSymbol(x)) return out.push(e);
-      if (x === "unquote") {
-        out.push(evalSExp(xs, env));
-      } else if (x === "unquote-splicing") {
-        const e = evalSExp(xs, env);
+      if (x.value === "unquote") {
+        out.push(evalSExp(xs.value[0], env));
+      } else if (x.value === "unquote-splicing") {
+        const e = evalSExp(xs.value[0], env);
         if (isNil(e)) return;
         if (!isPair(e)) throw new Error("Unquote-splicing applied to non list");
         out = out.concat(toList(e));
@@ -505,7 +558,6 @@ const syntaxticForms = {
     })
     return list(out);
   },
-
   quote: (exp, env) => exp.value[0],
   lambda: (exp, env) => {
     return make(
@@ -547,7 +599,6 @@ const syntaxticForms = {
     assertType(tag, "symbol");
     assertType(body, "pair");
     const [ formals, rules ] = exp.value;
-
   },
   define: (exp, env) => {
     const head = car(exp);
