@@ -23,6 +23,12 @@ class Env {
   define(k, v) {
     this.scope[k] = v;
   }
+  defineSyntax(k, v) {
+    if (this.parent) this.parent.defineSyntax(k, v);
+    else {
+      this.syntaxRules[k] = v;
+    }
+  }
   set(k, v) {
     if (k in this.scope) {
       this.scope[k] = v;

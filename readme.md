@@ -33,11 +33,11 @@ $ node src/eval.js
   1. call/cc
   2. quasiquotes
   3. base extended forms let, let*, letrec etc..
+  4. Macros
+    * No hygenic renaming pass yet
 
 # Todo
-
-  1. Macros
-  2. Remainder of the standard standard lib
-  3. Proper number tower
-  4. Tail calls
-  5. bytecode compilation
+  1. Remainder of the standard standard lib
+  2. Proper number tower
+  3. Tail calls
+  4. bytecode compilation

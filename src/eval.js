@@ -17,11 +17,22 @@ const {
   listEach,
   toList
 } = require("./listUtils");
+
+const {
+  isEqv,
+  isEqual,
+  isSameType
+} = require("./equality");
+
 const { Env } = require("./Env");
 const Zero = make("int", 0);
 const { builtInRules } = require("./preludeSyntaxRules");
 const fs = require("fs");
-const chalk = require('chalk');
+const {
+  printExp,
+  expToString
+} = require("./print");
+
 const jsValToScmVal = v => {
   const t = typeof v;
   switch(t) {
@@ -31,72 +42,6 @@ const jsValToScmVal = v => {
   }
 }
 
-const printExp = (exp, top=true) => {
-  if (!exp) return "(undefined)"
-  switch(exp.type) {
-    case "boolean":
-      if (exp.value) return chalk.red("#t");
-      else return chalk.red("#f");
-    case "char":
-      return chalk.green("#\\" + exp.value);
-    case "port": return chalk.blue(`[port ${exp.value.name}]`);
-    case "float":
-    case "int": return chalk.yellow(exp.value.toString());
-    case "string": return !top ? chalk.green(`"${exp.value}"`) : exp.value;
-    case "symbol": return exp.value;
-    case "procedure":
-      if (exp.value.name) {
-        return chalk.red(`[procedure ${exp.value.name}]`);
-      }
-      return chalk.red("[procedure]");
-    case "native-procedure": return chalk.red("[native-procedure]");
-    case "pair":
-      let res = [];
-      while(isPair(exp)) {
-        res.push(printExp(car(exp), false));
-        exp = cdr(exp);
-      }
-      if (isNil(exp)) {
-        return `(${res.join(" ")})`
-      }
-      return `(${res.join(" ")} . ${printExp(exp, false)})`
-    case "null": return "()"
-    case "vector": return `#(${exp.value.map(e => printExp(e, false)).join(" ")})`
-  }
-}
-const expToString = exp => {
-  if (!exp) return "(undefined)"
-  switch(exp.type) {
-    case "boolean":
-      if (exp.value) return "#t";
-      else return "#f";
-    case "char":
-      return "#\\" + exp.value;
-    case "port": return `[port ${exp.value.name}]`;
-    case "float":
-    case "int": return exp.value.toString();
-    case "string": return `"${exp.value}"`;
-    case "symbol": return exp.value;
-    case "procedure":
-      if (exp.value.name) {
-        return `[procedure ${exp.value.name}]`;
-      }
-      return "[procedure]";
-    case "native-procedure": return "[native-procedure]";
-    case "pair":
-      let res = [];
-      while(isPair(exp)) {
-        res.push(expToString(car(exp)));
-        exp = cdr(exp);
-      }
-      if (isNil(exp)) {
-        return `(${res.join(" ")})`
-      }
-      return `(${res.join(" ")} . ${expToString(exp)})`
-    case "null": return "()"
-    case "vector": return `#(${exp.value.map(expToString).join(" ")})`
-  }
-}
 const makeNative = (fn, minArgC, maxArgC=minArgC) => make("native-procedure", args => {
   if (args.length < minArgC || args.length > maxArgC) throw new Error("Invalid argument cound");
   if (minArgC === 1 && maxArgC === 1) {
@@ -139,6 +84,7 @@ const makeOp = (fn, id, opName) => {
     }, id));
   })
 }
+
 const makeRelatonalOp = (fn, op) => makeNative(args => {
   for (var i = 0; i < args.length; i++) {
     if (!isNumber(args[i])) throw new Error(op + " only works for numbers");
@@ -159,31 +105,7 @@ class Continuation extends Error {
 }
 
 Object.assign(prelude.syntaxRules, builtInRules);
-const isSameType = (a, b) => {
-  if (a.type !== b.type) {
-    if (isNumber(a) && isNumber(b)) return true;
-    if (isProcedure(a) && isProcedure(b)) return true;
-    return false;
-  }
-  return true;
-}
-const isEqv = (a, b) => a.value === b.value ? True : False;
-const isEqual = (a, b) => {
-  if (a.type === "vector") {
-    if (a.value === b.value) return True;
-    if (a.value.length !== b.value.length) return False;
-    for (let i = 0; i < a.value.length; i++) {
-      if (isEqual(a.value[i], b.value[i]) === False) return False;
-    }
-    return True;
-  }
-  if (a.type === "pair") {
-    if (a.value === b.value) return True;
-    if (isEqual(a.value[0], b.value[0]) === False) return False;
-    return isEqual(a.value[1], b.value[1]);
-  }
-  return isEqv(a, b);
-}
+
 const wrapEq = fn => make("native-procedure", args => {
   if (args.length !== 2) throw new Error("Equivalence operators take two arguments");
   const obj1 = args[0]
@@ -206,10 +128,20 @@ const makeAssoc = eqFn => makeNative((exp, alist) => {
   if (isNil(alist)) return False;
   throw new Error("Invalid list");
 }, 2)
+
+const makeMem = eqFn => makeNative((exp, alist) => {
+  if (isNil(exp)) return False;
+  while (isPair(alist)) {
+    if (eqFn(exp, alist.value[0]) === True) return alist;
+    alist = alist.value[1]
+  }
+  if (isNil(alist)) return False;
+  throw new Error("Invalid list");
+}, 2);
 Object.assign(prelude.scope, {
-  // "memq"
-  // "memv"
-  // "member"
+  "memq": makeMem(isEqv),
+  "memv":makeMem(isEqv),
+  "member":makeMem(isEqual),
   "eqv?": wrapEq(isEqv),
   "eq?": wrapEq(isEqv),
   "equal?": wrapEq(isEqual),
@@ -222,7 +154,40 @@ Object.assign(prelude.scope, {
     });
     return out;
   }, 1),
-  // "list-ref"
+  "string-append": make("native-procedure", args => make("string", args.map(i => {
+      assertType(i, "string");
+      return i.value;
+    }).join(""))
+  ),
+  "string-ref": makeNative((string, i) => {
+    assertType(string, "string");
+    if (!isNumber(i)) throw new Error("2nd argument of string-ref should be an integer");
+    const index = i.value;
+    if (index < 0) throw new Error("index is negative");
+    return make("char", string.value[index]);
+  }, 2),
+  "list-ref": makeNative((list, k) => {
+    if (!isNumber(k)) throw new Error("2nd argument of list-ref should be an integer");
+    let i = 0;
+    while(isPair(list)) {
+      if (i === k.value) return list.value[0];
+      i += 1;
+      list = list.value[1];
+    }
+    if (isNil(list)) throw new Error("Out of range");
+    throw new Error("Invalid list");
+  }, 2),
+  "list-tail": makeNative((list, k) => {
+    if (!isNumber(k)) throw new Error("2nd argument of list-ref should be an integer");
+    let i = 0;
+    while(isPair(list)) {
+      if (i === k.value) return list.value[1];
+      i += 1;
+      list = list.value[1];
+    }
+    if (isNil(list)) throw new Error("Out of range");
+    throw new Error("Invalid list");
+  }, 2),
   "assv": makeAssoc(isEqv),
   "assq": makeAssoc(isEqv),
   "assoc": makeAssoc(isEqual),
@@ -242,10 +207,8 @@ Object.assign(prelude.scope, {
     while(isPair(l)) l = cdr(l);
     return jsValToScmVal(isNil(l));
   }, 1),
-  car: makeNative(car, 1),
-  caar: makeNative(v => car(car(v)), 1),
   list: makeNative(args => list(args), 1, Infinity),
-  cadr: makeNative(v => car(cdr(v)), 1),
+  car: makeNative(car, 1),
   cdr: makeNative(cdr, 1),
   "set-car!": makeNative((pair, value) => {
     assertType(pair, "pair");
@@ -263,7 +226,7 @@ Object.assign(prelude.scope, {
   "string->symbol": makeNative(v => (assertType(v, "string"), symbol(v.value)), 1),
   "boolean?": wrapPred(isBoolean),
   "not": makeNative(v => (assertType(v, "boolean"), jsValToScmVal(!v.value)), 1),
-  "nil?": wrapPred(isNil),
+  "null?": wrapPred(isNil),
   "eval": make("native-procedure", (args, env) => (assertLen(args, 1), evalSExp(args[0], env, true))),
   "char?": wrapPred(isChar),
   "number?": wrapPred(isNumber),
@@ -597,13 +560,6 @@ const syntaxticForms = {
     if (li[2]) return evalSExp(li[2], env, tailPosition);
     return undefined
   },
-  "define-syntax": (exp, env) => {
-    assertType(exp, "pair");
-    const [ tag, body ] = exp.value;
-    assertType(tag, "symbol");
-    assertType(body, "pair");
-    const [ formals, rules ] = exp.value;
-  },
   define: (exp, env) => {
     const head = car(exp);
     if (isPair(head)) {
@@ -676,39 +632,52 @@ const evalSExp = (exp, env, tailPosition=false) => {
   return evalProcedure(x.value, xs, env);
 }
 
-const expand = (exp, env) => {
+const _expand = (exp, env) => {
   if (!isPair(exp)) return exp;
   let [x, xs] = exp.value
-  xs = expand(xs, env);
   if (!isSymbol(x)) {
-    return pair(expand(x, env), xs);
+    return pair(_expand(x, env), _expand(xs, env));
   }
   const rule = env.lookupSyntaxRule(x.value);
-  if (rule) return expand(rule(xs, env), env);
-  return pair(x, expand(xs, env));
+  if (rule) {
+    console.log(printExp(exp));
+    const expanded = rule(xs, env, exp);
+    console.log(printExp(expanded));
+    return _expand(expanded, env);
+  }
+  return pair(x, _expand(xs, env));
 }
 
-const runTests = () => {
+const expand = (exp, env) => {
+  const expanded = _expand(exp, env);
+  // rename here
+  // return renameExpandedSymbols(expanded);
+  return expanded;
+}
+
+const makeEnv = () => {
   const env = new Env(prelude);
   const preludeSrc = fs.readFileSync(path.join(__dirname, "prelude.scm"), "utf-8");
   grammar.parse(preludeSrc).forEach(exp => evalSExp(expand(exp, env), env));
+  return env;
+}
+const runFile = (src, env = makeEnv()) => grammar.parse(fs.readFileSync(src, "utf-8")).forEach(exp => {
+  const expanded = expand(exp, env);
+  console.log(printExp(expanded));
+  evalSExp(expanded, env)
+});
 
-  let testSrc = fs.readFileSync(path.join(__dirname, "tests/stdlib.scm"), "utf-8");
+const runTests = () => {
   try {
-    grammar.parse(testSrc).forEach(exp => evalSExp(expand(exp, env), env));  
+    runFile(path.join(__dirname, "tests/stdlib.scm"));
   } catch(e) {
     console.error(e);
   }
-  
-
 }
 
 const path = require("path");
 const repl = () => {
-  const env = new Env(prelude);
-  const preludeSrc = fs.readFileSync(path.join(__dirname, "prelude.scm"), "utf-8");
-  grammar.parse(preludeSrc).forEach(exp => evalSExp(expand(exp, env), env));
-
+  const env = makeEnv();
   console.log(`R4rsjs Interpreter version 0.1 🎉\nCopyright ©️  2019 Jan Kjærgaard`);
   const repl = require('repl');
   const r = repl.start({ prompt: '> ', eval: evalCmd, writer: myWriter });
@@ -732,6 +701,6 @@ const repl = () => {
     return output;
   }
 }
-
-runTests()
+runFile(path.join(__dirname, "run.scm"))
+// runTests()
 // repl();

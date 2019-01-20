@@ -26,3 +26,11 @@
 (test '(append '(a (b)) '((c))) '(a (b) (c)))
 (test '(reverse '(a b c))                     '(c b a))
 (test '(reverse '(a (b c) d (e (f))))         '((e (f)) d (b c) a))
+
+(test '(memq 'a '(a b c))                     '(a b c))
+(test '(memq 'b '(a b c))                     '(b c))
+(test '(memq 'a '(b c d))                     '#f)
+(test '(memq (list 'a) '(b (a) c))            '#f)
+(test '(member (list 'a) '(b (a) c))          '((a) c))
+(test '(memv 101 '(100 101 102))              '(101 102))
+(test '(list-ref '(100 101 102) 1)              101)
