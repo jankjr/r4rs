@@ -8,13 +8,15 @@ const {
   list,
   True,
   False,
-  syntacticForms
+  syntacticForms,
+  incPhase
 } = require("./types");
+const { printExp } = require("./print");
 
 const { isEqual, isSameType } = require("./equality");
 const { car, cdr, listEach, toList } = require("./listUtils");
 
-const parsePattern = (exp, tag, literals, bound) => {
+const parsePattern = (exp, tag, literals, bound, env) => {
   if (isSymbol(exp)) {
     if (exp.value === "...") {
       throw new Error("Invalid ellipsis");
@@ -53,13 +55,13 @@ const parsePattern = (exp, tag, literals, bound) => {
           break;
         }
       }
-      matchers.push(parsePattern(x, tag, literals, bound));
+      matchers.push(parsePattern(x, tag, literals, bound, env));
       exp = xs;
     } while (isPair(exp));
 
     if (!isNil(exp)) {
       if (ellipsis) throw new Error("Cannot mix ellipsis and .");
-      last = parsePattern(exp, tag, literals, bound);
+      last = parsePattern(exp, tag, literals, bound, env);
     }
     return {
       type: "pattern",
@@ -75,9 +77,9 @@ const parsePattern = (exp, tag, literals, bound) => {
   };
 };
 
-const createPatternMatcher = (exp, tag, literals) => {
+const createPatternMatcher = (exp, tag, literals, parseEnv) => {
   const bound = new Set();
-  const pattern = parsePattern(exp, tag, literals, bound);
+  const pattern = parsePattern(exp, tag, literals, bound, parseEnv);
   return {
     bound,
     pattern
@@ -90,7 +92,8 @@ const parseExpansion = (
   macroTag,
   literals,
   env,
-  usedBindings = new Set()
+  usedBindings = new Set(),
+  parseEnv
 ) => {
   if (isSymbol(exp)) {
     if (match.bound.has(exp.value)) {
@@ -131,14 +134,14 @@ const parseExpansion = (
         };
       } else {
         expansions.push(
-          parseExpansion(x, match, macroTag, literals, env, thisBindings)
+          parseExpansion(x, match, macroTag, literals, env, thisBindings, parseEnv)
         );
       }
       exp = xs;
     } while (isPair(exp));
     const last = isNil(exp)
       ? nil
-      : parseExpansion(exp, match, macroTag, literals, env, thisBindings);
+      : parseExpansion(exp, match, macroTag, literals, env, thisBindings, parseEnv)
     thisBindings.forEach(b => usedBindings.add(b));
     return {
       type: "list",
@@ -157,62 +160,65 @@ const parseExpansion = (
 const matchExp = (pattern, exp) => {
   switch (pattern.type) {
     case "literal":
-      return isSymbol(exp) && exp.value === pattern.value ? {} : null;
+      if (isSymbol(exp) && exp.value === pattern.value) return {};
+      throw new Error("Expected " + pattern.value + " got " + printExp(exp));
     case "bound":
       return {
         [pattern.value]: exp
       };
     case "const":
-      if (!isSameType(pattern.value, exp)) return null;
-      if (isEqual(pattern.value, exp) !== True) return null;
+      if (!isSameType(pattern.value, exp)) {
+        throw new Error("Expected " + pattern + " got " + printExp(exp));
+      }
+      if (isEqual(pattern.value, exp) !== True) {
+        throw new Error("Expected " + pattern + " got " + printExp(exp));
+      }
       return {};
     case "pattern":
       let out = {};
       for (let i = 0; i < pattern.matchers.length; i++) {
         if (!isPair(exp)) {
-          return null;
+           throw new Error("Expected pair, got " + printExp(exp));
         }
         let submatch = matchExp(pattern.matchers[i], exp.value[0]);
-        if (!submatch) return null;
         Object.assign(out, submatch);
         exp = exp.value[1];
       }
       if (pattern.ellipsis) {
         listEach(exp, sub => {
-          if (!out) return;
           const m = matchExp(pattern.ellipsis, sub);
-          if (!m) out = null;
-          else {
-            Object.keys(m).forEach(key => {
-              out[key] = out[key] || [];
-              out[key].push(m[key]);
-            });
-          }
+          Object.keys(m).forEach(key => {
+            out[key] = out[key] || [];
+            out[key].push(m[key]);
+          });
         });
       } else if (pattern.last) {
-        if (isPair(exp)) return null;
+        if (isPair(exp)) {
+           throw new Error("Unexpected pair, got " + printExp(exp));
+        }
         let submatch = matchExp(pattern.last, exp);
-        if (!submatch) return null;
         Object.assign(out, submatch);
       } else {
-        if (!isNil(exp)) return null;
+        if (!isNil(exp)) {
+           throw new Error("Expected end of list " + printExp(exp));
+        }
       }
       return out;
     default:
       throw new Error("invalid pattern" + pattern.type);
   }
 };
-
 let phase = 0;
-const performExpansion = (boundVars, expander) => {
+const performExpansion = (boundVars, expander, env) => {
   phase += 1;
-  return runExpansion(boundVars, expander);
+  return runExpansion(boundVars, expander, env);
 };
 
-const runExpansion = (vars, exp) => {
+const runExpansion = (vars, exp, env) => {
   switch (exp.type) {
     case "symbol":
-      return exp;
+      if (syntacticForms.has(exp.value)) return exp;
+      return symbol(exp.value, phase);
     case "const":
       return exp.value;
     case "bound":
@@ -249,11 +255,11 @@ const runExpansion = (vars, exp) => {
                 const scope = {};
                 nonArrays.forEach(k => (scope[k] = vars[k]));
                 arrays.forEach(([key, array]) => (scope[key] = array[j]));
-                out.push(runExpansion(scope, e.child));
+                out.push(runExpansion(scope, e.child, env));
               }
               break;
             case "bound":
-              const n = runExpansion(vars, e.child);
+              const n = runExpansion(vars, e.child, env);
               if (n === null) continue;
               out = out.concat(n);
               break;
@@ -261,90 +267,82 @@ const runExpansion = (vars, exp) => {
               throw new Error("Invalid expansion");
           }
         } else {
-          const n = runExpansion(vars, e);
+          const n = runExpansion(vars, e, env);
           if (!n) throw new Error("Unvalid exp");
           out.push(n);
         }
       }
       if (isNil(exp.last)) return list(out);
-      return list(out, runExpansion(vars, exp.last));
+      return list(out, runExpansion(vars, exp.last, env));
     default:
       throw new Error("unhandled" + exp.type);
   }
 };
 
-const makeSyntax = (tag, rules) => {
-  return (xs, env, exp) => {
+const makeSyntax = (tag, rules, defEnv) => {
+  return (xs, expEnv, exp) => {
+    let errors = [];
     for (let i = 0; i < rules.length; i++) {
-      const match = matchExp(rules[i].matcher.pattern, exp);
-      if (!match) continue;
-      const expanded = performExpansion(match, rules[i].expander);
+      let match = null;
+      try {
+        match = matchExp(rules[i].matcher.pattern, exp);
+        if (!match) continue;
+      } catch(e) {
+        errors.push(e.message);
+        continue;
+      }
+      const expanded = performExpansion(match, rules[i].expander, defEnv, expEnv);
       return expanded;
     }
-    throw new Error("Cannot expand " + tag);
+    throw new Error("Cannot expand " + tag + "\n" + errors.join("\n"));
   };
 };
 
-const builtInRules = {
-  "define-syntax": (exp, env) => {
-    const [tag, rules] = toList(exp);
-    if (!isSymbol(tag)) {
-      throw new Error("Expected symbol");
-    }
-    const macroTag = tag.value;
-    if (env.lookupSyntaxRule(macroTag) !== null) {
-      throw new Error(`Cannot redefine syntax-rule ${macroTag}`);
-    }
-    const [syntaxRules, literals, ...rulesArray] = toList(rules);
-    if (!isSymbol(syntaxRules) || syntaxRules.value !== "syntax-rules") {
-      throw new Error("Expected syntax rules");
-    }
-    const literalStrings = new Set(
-      toList(literals).map(lit => {
-        if (!isSymbol(lit))
-          throw new Error("syntax rules literals must be symbols");
-        return lit.value;
-      })
-    );
-
-    const syntaxRule = makeSyntax(
-      macroTag,
-      rulesArray.map(rule => {
-        const [pattern, template] = toList(rule);
-        const matcher = createPatternMatcher(pattern, macroTag, literalStrings);
-        return {
-          pattern,
-          matcher,
-          template,
-          expander: parseExpansion(
-            template,
-            matcher,
-            macroTag,
-            literalStrings,
-            env
-          )
-        };
-      })
-    );
-
-    env.defineSyntax(macroTag, syntaxRule);
-    return nil;
-  },
-  begin: exp => {
-    if (!isPair(exp)) throw new Error("Invalid list");
-    const [command, sequence] = exp.value;
-    if (isNil(sequence)) return command;
-    return list([
-      list([
-        symbol("lambda"),
-        list([symbol("ignore"), symbol("thunk")]),
-        list([symbol("thunk")])
-      ]),
-      command,
-      list([symbol("lambda"), nil, pair(symbol("begin"), sequence)])
-    ]);
+const defineSyntax = (exp, parseEnv) => {
+  const [tag, rules] = toList(exp);
+  if (parseEnv.isSyntaxRule(tag)) {
+    throw new Error(`Cannot redefine core form ${tag.value}`);
   }
-};
+
+  const [syntaxRules, literals, ...rulesArray] = toList(rules);
+  if (!isSymbol(syntaxRules) || syntaxRules.value !== "syntax-rules") {
+    throw new Error("Expected syntax rules");
+  }
+
+  const literalStrings = new Set(
+    toList(literals).map(lit => {
+      if (!isSymbol(lit)) {
+        throw new Error("Syntax-rules literals must be symbols");
+      }
+
+      return lit.value;
+    })
+  );
+
+  const syntaxRule = makeSyntax(
+    tag.value,
+    rulesArray.map(rule => {
+      const [pattern, template] = toList(rule);
+      const matcher = createPatternMatcher(pattern, tag.value, literalStrings, parseEnv);
+      return {
+        pattern,
+        matcher,
+        template,
+        expander: parseExpansion(
+          template,
+          matcher,
+          tag.value,
+          literalStrings,
+          parseEnv
+        )
+      };
+    }),
+    parseEnv
+  );
+
+  parseEnv.defineSyntax(tag.value, syntaxRule);
+  return nil;
+}
 module.exports = {
-  builtInRules
+  defineSyntax
 };

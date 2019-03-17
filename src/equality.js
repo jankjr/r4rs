@@ -6,8 +6,9 @@ const isSameType = (a, b) => {
     return false;
   }
   return true;
-}
-const isEqv = (a, b) => a.value === b.value ? True : False;
+};
+const isEqv = (a, b) => (a.value === b.value ? True : False);
+
 const isEqual = (a, b) => {
   if (a.type === "vector") {
     if (a.value === b.value) return True;
@@ -23,8 +24,8 @@ const isEqual = (a, b) => {
     return isEqual(a.value[1], b.value[1]);
   }
   return isEqv(a, b);
-}
+};
 
-module.exports.isSameType = isSameType
-module.exports.isEqv = isEqv
-module.exports.isEqual = isEqual
+module.exports.isSameType = isSameType;
+module.exports.isEqv = isEqv;
+module.exports.isEqual = isEqual;

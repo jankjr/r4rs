@@ -1,15 +1,14 @@
 ; let let* letrec
+(define-syntax begin
+  (syntax-rules ()
+    ((begin expression) expression)
+    ((begin expression expressions ...)
+     ((lambda (ignored) (begin expressions ...)) expression))))
 
 (define-syntax let
   (syntax-rules ()
-    ((let ((name val) ...) body1 body2 ...)
-     ((lambda (name ...) body1 body2 ...)
-      val ...))
-    ((let tag ((name val) ...) body1 body2 ...)
-     ((letrec ((tag (lambda (name ...)
-                      body1 body2 ...)))
-        tag)
-      val ...))))
+    ((let ((var val) ...) body ...)
+      ((lambda (var ...) body ...) val ...))))
 
 (define-syntax let*
   (syntax-rules ()
@@ -24,23 +23,14 @@
   )
 )
 
-(define-syntax letrec
-  (syntax-rules ()
-    (
-      (letrec () body ...)
-      (lambda () body ...)
-    )
-    (
-      (letrec ((names vals)...) body ...)
-      ((lambda ()
-        (define names ()) ...
-        (set! names vals) ...
-        body ...
-      ))
-    )
-  )
-)
-
+(define-syntax letrec 
+   (syntax-rules () 
+     ((letrec ((var init) ...) . body) 
+      (let ((var 'undefined) ...) 
+        (let ((var (let ((temp init)) (lambda () (set! var temp)))) 
+              ... 
+              (bod (lambda () . body))) 
+          (var) ... (bod))))))
 
 ; conditionals
 
@@ -167,3 +157,11 @@
 (define (cddadr x) (cdr (cdr (car (cdr x)))))
 (define (cdddar x) (cdr (cdr (cdr (car x)))))
 (define (cddddr x) (cdr (cdr (cdr (cdr x)))))
+
+
+(define (zero? x) (= x 0))
+(define (positive? x) (>= x 0))
+(define (negative? x) (< x 0))
+(define (even? x) (= (% x 2) 0))
+(define (odd? x) (not (even? x)))
+

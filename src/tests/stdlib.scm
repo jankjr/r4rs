@@ -1,3 +1,4 @@
+
 (define (test exp expecting)
   (let ((result (eval exp)))
     (if (not (equal? result expecting))
@@ -8,10 +9,6 @@
         (display expecting)
         (display " expected ")
         (display result)
-        (display "\n"))
-      (begin
-        (display "OK: ")
-        (display exp)
         (display "\n")))))
 
 ; tests
@@ -34,3 +31,11 @@
 (test '(member (list 'a) '(b (a) c))          '((a) c))
 (test '(memv 101 '(100 101 102))              '(101 102))
 (test '(list-ref '(100 101 102) 1)              101)
+(test '(list-ref '(100 101 102) 1)              101)
+
+(test '(min 0)               0)
+(test '(min 0 1)             0)
+(test '(min 3 2 1)           1)
+(test '(max 0)               0)
+(test '(max 0 1)             1)
+(test '(max 3 2 1)           3)

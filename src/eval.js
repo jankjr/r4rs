@@ -20,17 +20,19 @@ const {
   nil,
   symbol,
   list,
+  isDefinedByMacro,
   True,
   False,
-  syntacticForms
+  syntacticForms,
+  isSyntaxticForm
 } = require("./types");
+const path = require("path");
 const { car, cdr, listEach, toList } = require("./listUtils");
 
 const { isEqv, isEqual, isSameType } = require("./equality");
 
 const { Env } = require("./Env");
 const Zero = make("int", 0);
-const { builtInRules } = require("./preludeSyntaxRules");
 const fs = require("fs");
 const { printExp, expToString } = require("./print");
 
@@ -50,7 +52,7 @@ const jsValToScmVal = v => {
 const makeNative = (fn, minArgC, maxArgC = minArgC) =>
   make("native-procedure", args => {
     if (args.length < minArgC || args.length > maxArgC)
-      throw new Error("Invalid argument cound");
+      throw new Error("Invalid argument count");
     if (minArgC === 1 && maxArgC === 1) {
       return fn(args[0]);
     }
@@ -80,7 +82,6 @@ const assert = (t, msg) => {
   return true;
 };
 
-const prelude = new Env();
 
 const makeOp = (fn, id, opName) => {
   return make("native-procedure", args => {
@@ -118,8 +119,6 @@ class Continuation extends Error {
     this.args = args;
   }
 }
-
-Object.assign(prelude.syntaxRules, builtInRules);
 
 const wrapEq = fn =>
   make("native-procedure", args => {
@@ -159,7 +158,8 @@ const makeMem = eqFn =>
     if (isNil(alist)) return False;
     throw new Error("Invalid list");
   }, 2);
-Object.assign(prelude.scope, {
+
+const prelude = {
   memq: makeMem(isEqv),
   memv: makeMem(isEqv),
   member: makeMem(isEqual),
@@ -265,7 +265,7 @@ Object.assign(prelude.scope, {
   "null?": wrapPred(isNil),
   eval: make(
     "native-procedure",
-    (args, env) => (assertLen(args, 1), evalSExp(args[0], env, true))
+    (args, env) => (assertLen(args, 1), evalSExp(expand(args[0], env), env, true))
   ),
   "char?": wrapPred(isChar),
   "number?": wrapPred(isNumber),
@@ -345,6 +345,7 @@ Object.assign(prelude.scope, {
     return jsValToScmVal(v);
   }),
   "/": makeOp((l, r) => l / r, 1, "/"),
+  "%": makeOp((l, r) => l % r, 1, "%"),
   "<": makeRelatonalOp((l, r) => l < r, "<"),
   "<=": makeRelatonalOp((l, r) => l <= r, "<="),
   ">": makeRelatonalOp((l, r) => l > r, ">"),
@@ -362,40 +363,6 @@ Object.assign(prelude.scope, {
     }
     return True;
   }),
-  "zero?": makeNative(
-    v => (
-      assert(isNumber(v), "zero? expects number"), jsValToScmVal(v.value === 0)
-    ),
-    1
-  ),
-  "positive?": makeNative(
-    v => (
-      assert(isNumber(v), "positive? expects number"),
-      jsValToScmVal(v.value >= 0)
-    ),
-    1
-  ),
-  "negative?": makeNative(
-    v => (
-      assert(isNumber(v), "negative? expects number"),
-      jsValToScmVal(v.value < 0)
-    ),
-    1
-  ),
-  "odd?": makeNative(
-    v => (
-      assert(isNumber(v), "odd? expects number"),
-      jsValToScmVal(v.value % 2 === 1)
-    ),
-    1
-  ),
-  "even?": makeNative(
-    v => (
-      assert(isNumber(v), "even? expects number"),
-      jsValToScmVal(v.value % 2 === 0)
-    ),
-    1
-  ),
   max: makeNative(
     v =>
       jsValToScmVal(
@@ -404,7 +371,7 @@ Object.assign(prelude.scope, {
           return Math.max(l, r.value);
         }, -Infinity)
       ),
-    2,
+    1,
     Infinity
   ),
   min: makeNative(
@@ -415,7 +382,7 @@ Object.assign(prelude.scope, {
           return Math.min(l, r.value);
         }, Infinity)
       ),
-    2,
+    1,
     Infinity
   ),
   floor: makeNative(
@@ -504,7 +471,7 @@ Object.assign(prelude.scope, {
           throw new Error("2nd argument for display must be port");
         port.value.write(expToString(exp));
       }
-      return undefined;
+      return nil;
     },
     1,
     2
@@ -607,9 +574,9 @@ Object.assign(prelude.scope, {
     2,
     Infinity
   )
-});
+};
 
-const makeProcedure = (formals, body, env, name) => {
+const parseArgs = formals => {
   const params = {
     formals: [],
     hasRest: false,
@@ -641,7 +608,11 @@ const makeProcedure = (formals, body, env, name) => {
       throw new Error("Invalid rest arg type " + v.type);
     }
   }
+  return params;
+}
 
+const makeProcedure = (formals, body, env, name) => {
+  const params = parseArgs(formals);
   return {
     body: toList(body),
     env,
@@ -649,6 +620,7 @@ const makeProcedure = (formals, body, env, name) => {
     name
   };
 };
+
 
 // Base syntax forms
 const syntaxticForms = {
@@ -753,7 +725,7 @@ const evalProcedure = ({ body, params, env }, xs, callEnv) => {
       );
     }
   }
-  let out = null;
+  let out = nil;
   body.forEach((exp, i) => {
     out = evalSExp(exp, newEnv, i === body.length - 1);
   });
@@ -770,49 +742,207 @@ const evalSExp = (exp, env, tailPosition = false) => {
     return exp;
   }
   let [x, xs] = exp.value;
-  if (isSymbol(x) && x.value in syntaxticForms) {
+  if (isSyntaxticForm(x)) {
     return syntaxticForms[x.value](xs, env, tailPosition);
   }
-  x = evalSExp(x, env, tailPosition);
-  if (!isProcedure(x)) {
-    throw new Error(x.type + " is not applicable");
+  const result = evalSExp(x, env, tailPosition);
+  if (result === undefined) {
+    throw new Error("invalid evaluation");
   }
-  if (isNative(x)) {
-    return evalNative(x.value, xs, env);
+  if (!isProcedure(result)) {
+    throw new Error(result.type + " is not applicable");
   }
-  return evalProcedure(x.value, xs, env);
+  if (isNative(result)) {
+    return evalNative(result.value, xs, env);
+  }
+  return evalProcedure(result.value, xs, env);
 };
 
-const _expand = (exp, env) => {
+const getPhasedSymbolName = sym =>  `${sym.value}^${sym.phase}`;
+
+class RenameEnv  {
+  constructor(parent, top, verbose) {
+    this.vars = new Map();
+    this.parent = parent;
+    this.top = top;
+    this.verbose = verbose;
+  }
+  subscope() {
+    return new RenameEnv(this, this.top, this.verbose);
+  }
+  define(sym) {
+    if (!isSymbol(sym)) throw new Error("Cannot use " + sym.type + " as variable name");
+    if (isDefinedByMacro(sym)) {
+      sym = symbol(getPhasedSymbolName(sym));
+    }
+
+    if (this.vars.has(sym.value)) {
+     throw new Error(sym.value + " is already defined");
+    }
+    this.vars.set(sym.value, sym);
+    return sym;
+  }
+
+  lookup(sym) {
+    if (!isSymbol(sym)) throw new Error("Cannot lookup " + sym.type + " as variable name");
+     if (isDefinedByMacro(sym)) {
+       const macroName = getPhasedSymbolName(sym);
+       if (this.vars.has(macroName)) {
+         return this.vars.get(macroName);
+       }
+     }
+     if (this.vars.has(sym.value)) {
+       return this.vars.get(sym.value);
+     }
+     if (this.parent) {
+       return this.parent.lookup(sym);
+     }
+     return sym;
+  }
+}
+
+const makeIf = (test, then, els) => {
+  if (!test || !then) throw new Error("Invalid if exp");
+  if(!els) return pair(symbol("if"), pair(test, pair(then, nil)));
+  return pair(symbol("if"), pair(test, pair(then, pair(els, nil))));
+}
+const renameBody = (body, env) => {
+  return renameExpandedSymbols(body, env); 
+}
+const renameLambda = (formals, body, env) => {
+  const sub = env.subscope();
+  if (isSymbol(formals)) {
+    return [sub.define(formals), renameBody(body, sub)]
+  } else if (isPair(formals) || isNil(formals)) {
+    let formalsArr = formals;
+    const args = [];
+    while (isPair(formalsArr)) {
+      const v = car(formalsArr);
+      args.push(sub.define(v));
+      formalsArr = cdr(formalsArr);
+    }
+    if (isSymbol(formalsArr)) {
+      if (formalsArr.value in syntaxticForms) {
+        throw new Error("Rest arg cannot have name " + v.value);
+      }
+      args.push(sub.define(formalsArr));
+      return [list(args, formalsArr), renameBody(body, sub)]
+    } else if (!isNil(formalsArr)) {
+      throw new Error("Invalid rest arg type " + v.type);
+    }
+    return [list(args), renameBody(body, sub)]
+  } else {
+    throw new Error("Invalid formals type " + formals.type);
+  }
+}
+const renamePhaseSyntactic = {
+  unquote: () => {
+    throw new Error("Form not in quasiquote");
+  },
+  "unquote-splicing": () => {
+    throw new Error("Form not in quasiquote");
+  },
+  quasiquote: (exp, env) => {
+    if (!isPair(exp)) return [symbol("quasiquote"), exp];
+    let out = [symbol("quasiquote")];
+    listEach(exp.value[0], e => {
+      if (isPair(e) && isSymbol(e.value[0]) && (e.value[0].value === "unquote" || e.value[0].value === "unquote-splicing")) {
+        out.push(list([x, renameExpandedSymbols(e.value[1], env)]));
+      } else {
+        out.push(renameExpandedSymbols(e, env));  
+      }
+    });
+    return list(out);
+  },
+  quote: (exp, env) => pair(symbol("quote"), renameExpandedSymbols(exp, env)),
+  lambda: (exp, env) => {
+    const args = car(exp);
+    const body = cdr(exp);
+    if (!args || !body) throw new Error("Invalid lambda definition");
+    const [renamedArgs, renamedBody] = renameLambda(args, body, env);
+    return pair(symbol("lambda"), pair(renamedArgs, renamedBody));
+  },
+  "set!": (exp, env) => {
+    const l = toList(exp);
+    if (l.length !== 2) {
+      throw new Error("set! must have 2 clauses");
+    }
+    const [name, value] = l;
+    if (!isSymbol(name)) throw new Error("Invalid set! variable should be symbol");
+    if (isSyntaxticForm(name)) throw new Error("Invalid variable name " + name.value);
+    return list([symbol("set!"), env.lookup(name), renameExpandedSymbols(value, env)]);
+  },
+  if: (exp, env) => {
+    const li = toList(exp);
+    const [test, then, els] = li;
+    return makeIf(renameExpandedSymbols(test, env), renameExpandedSymbols(then, env), els ? renameExpandedSymbols(els, env) : null);
+  },
+
+  define: (exp, env) => {
+    const head = car(exp);
+    if (isPair(head)) {
+      // define procedure
+      const name = env.define(car(head));
+      const args = cdr(head)
+      const body = cdr(exp);
+      const [renamedArgs, renamedBody] = renameLambda(args, body, env);
+
+      return list([symbol("define"), pair(name, renamedArgs)], renamedBody);
+    } else if (isSymbol(head)) {
+      assert(!syntacticForms.has(head.value), "Cannot redefine syntatic form");
+      // define variable
+      return list([symbol("define"), env.define(head), renameExpandedSymbols(car(cdr(exp)), env)]);
+    } else {
+      throw new Error("Invalid define definition " + head.type);
+    }
+  }
+};
+
+const renameExpandedSymbols = (exp, env) => {
+  if (isSymbol(exp)) {
+    return env.lookup(exp);
+  }
+
+  if (!isPair(exp)) {
+    return exp;
+  }
+  let [x, xs] = exp.value;
+  if (isSyntaxticForm(x)) {
+    return renamePhaseSyntactic[x.value](xs, env);
+  }
+  return pair(renameExpandedSymbols(x, env), renameExpandedSymbols(xs, env))
+}
+
+
+const performMacroExpansion = (exp, env) => {
   if (!isPair(exp)) return exp;
   let [x, xs] = exp.value;
   if (!isSymbol(x)) {
-    return pair(_expand(x, env), _expand(xs, env));
+    return pair(performMacroExpansion(x, env), performMacroExpansion(xs, env));
   }
   const rule = env.lookupSyntaxRule(x.value);
   if (rule) {
-    console.log(printExp(exp));
     const expanded = rule(xs, env, exp);
-    console.log(printExp(expanded));
-    return _expand(expanded, env);
+    return performMacroExpansion(expanded, env);
   }
-  return pair(x, _expand(xs, env));
+  return pair(x, performMacroExpansion(xs, env));
 };
 
 const expand = (exp, env) => {
-  const expanded = _expand(exp, env);
-  // rename here
-  // return renameExpandedSymbols(expanded);
-  return expanded;
+  env = env.subscope();
+  const expanded = performMacroExpansion(exp, env);
+  return renameExpandedSymbols(expanded, new RenameEnv(null, env));
 };
 
+const rootEnv = new Env();
+Object.assign(rootEnv.scope, prelude)
+const preludeSrc = fs.readFileSync(
+  path.join(__dirname, "prelude.scm"),
+  "utf-8"
+);
+grammar.parse(preludeSrc).forEach(exp => evalSExp(expand(exp, rootEnv), rootEnv));
 const makeEnv = () => {
-  const env = new Env(prelude);
-  const preludeSrc = fs.readFileSync(
-    path.join(__dirname, "prelude.scm"),
-    "utf-8"
-  );
-  grammar.parse(preludeSrc).forEach(exp => evalSExp(expand(exp, env), env));
+  const env = new Env(rootEnv);
   return env;
 };
 const runFile = (src, env = makeEnv()) =>
@@ -824,13 +954,13 @@ const runFile = (src, env = makeEnv()) =>
 
 const runTests = () => {
   try {
-    runFile(path.join(__dirname, "tests/stdlib.scm"));
+    runFile(path.join(__dirname, "tests/stdlib.scm"), makeEnv());
+    runFile(path.join(__dirname, "tests/macros.scm"), makeEnv());
   } catch (e) {
     console.error(e);
   }
 };
 
-const path = require("path");
 const repl = () => {
   const env = makeEnv();
   console.log(
@@ -845,7 +975,7 @@ const repl = () => {
     try {
       exps.forEach(exp => {
         const desugared = expand(exp, env);
-        // console.log(printExp(desugared));
+        console.log(printExp(desugared));
         result = evalSExp(desugared, env);
       });
     } catch (e) {
@@ -858,6 +988,6 @@ const repl = () => {
     return output;
   }
 };
-runFile(path.join(__dirname, "run.scm"));
-// runTests()
+// runFile(path.join(__dirname, "run.scm"));
+runTests()
 // repl();

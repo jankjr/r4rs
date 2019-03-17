@@ -33,8 +33,7 @@ $ node src/eval.js
   1. call/cc
   2. quasiquotes
   3. base extended forms let, let*, letrec etc..
-  4. Macros
-    * No hygenic renaming pass yet
+  4. Hygenic Macros
 
 # Todo
   1. Remainder of the standard standard lib

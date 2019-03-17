@@ -9,6 +9,8 @@ const {
 } = require("./listUtils");
 
 const chalk = require('chalk');
+let level = 0;
+const indent = () => " ".repeat(level);
 const printExp = (exp, top=true) => {
   if (!exp) return "(undefined)"
   switch(exp.type) {
@@ -21,7 +23,9 @@ const printExp = (exp, top=true) => {
     case "float":
     case "int": return chalk.yellow(exp.value.toString());
     case "string": return !top ? chalk.green(`"${exp.value}"`) : exp.value;
-    case "symbol": return exp.value;
+    case "symbol":
+      if (exp.phase !== -1) return `${exp.value}$${exp.phase}`
+      return exp.value;
     case "procedure":
       if (exp.value.name) {
         return chalk.red(`[procedure ${exp.value.name}]`);
@@ -37,9 +41,11 @@ const printExp = (exp, top=true) => {
       if (isNil(exp)) {
         return `(${res.join(" ")})`
       }
-      return `(${res.join(" ")} . ${printExp(exp, false)})`
+      const out = `(${res.join(" ")} . ${printExp(exp, false)})`;
+      return out;
     case "null": return "()"
     case "vector": return `#(${exp.value.map(e => printExp(e, false)).join(" ")})`
+    default: throw new Error("unknown type " + exp);
   }
 }
 const expToString = exp => {
