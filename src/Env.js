@@ -11,13 +11,14 @@ class Env {
     } else {
       this.root = this;
     }
-
+    this.callWithValuesReceiver = null;
     this.parent = parent;
     this.scope = {};
     this.syntaxRules = {
       "define-syntax": defineSyntax
     };
   }
+
   isSyntaxRule(symbol) {
     if (!isSymbol(symbol)) throw new Error("Not symbol " + symbol.type);
     return syntacticForms.has(symbol.value) || this.lookupSyntaxRule(symbol.value) !== null;
@@ -44,7 +45,7 @@ class Env {
     return false;
   }
   define(k, v) {
-    if (this.scope[k]) throw new Error(k + " already defined");
+    if (syntacticForms.has(k)) throw new Error("Cannot redefine syntax");
     this.scope[k] = v;
   }
   defineSyntax(k, v) {

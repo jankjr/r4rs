@@ -250,7 +250,7 @@ const runExpansion = (vars, exp, env) => {
                   nonArrays.push(vars[key]);
                 }
               });
-              if (arrays.length === 0) throw new Error("Nothing to expand");
+              // if (arrays.length === 0) throw new Error("Nothing to expand");
               for (let j = 0; j < arrayLen; j++) {
                 const scope = {};
                 nonArrays.forEach(k => (scope[k] = vars[k]));
@@ -268,8 +268,10 @@ const runExpansion = (vars, exp, env) => {
           }
         } else {
           const n = runExpansion(vars, e, env);
-          if (!n) throw new Error("Unvalid exp");
-          out.push(n);
+          if (!n) {
+          } else {
+            out.push(n);  
+          }
         }
       }
       if (isNil(exp.last)) return list(out);
@@ -343,6 +345,4 @@ const defineSyntax = (exp, parseEnv) => {
   parseEnv.defineSyntax(tag.value, syntaxRule);
   return nil;
 }
-module.exports = {
-  defineSyntax
-};
+module.exports.defineSyntax = defineSyntax;
