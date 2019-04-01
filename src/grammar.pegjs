@@ -1,6 +1,9 @@
 {
   const{
-    make,
+    makeChar,
+    makeString,
+    makeFloat,
+    makeInt,
     pair,
     nil,
     symbol,
@@ -50,11 +53,11 @@ SExps = x:Exp* xs:(_ "." _ Exp)? {
 Terminal = Boolean / Character / Number / String / Identifier
 
 Character = "#\\newline" {
-  return make("char", "\n")
+  return makeChar("\n")
 } / "#\\space" {
-  return make("char", " ")
+  return makeChar(" ")
 } / "#\\" c:[^ \t\n\r;] {
-  return make("char", c)
+  return makeChar(c)
 }
 
 Identifier = x:Initial xs:Subsequent* { return symbol(x + xs.join("")) }
@@ -66,7 +69,7 @@ Subsequent = Initial / Digit / SpecialSubsequent
 SpecialSubsequent = "." / "+" / "-"
 PecularIdentififer = "+" / "-" / "..."
 String "string"
- = "\"" chrs:StringChr* "\"" { return make("string", chrs.join("")) }
+ = "\"" chrs:StringChr* "\"" { return makeString(chrs.join("")) }
 
 StringChr "char"
  = [^\\"]
@@ -88,11 +91,11 @@ Number "sign number"
 
 _Number "number"
   = int:Digits frac:("." Digits)? {
-    if (!frac) return make("int", parseInt(int))
-    return make("float", parseFloat(int + frac.join("")))
+    if (!frac) return makeInt(parseInt(int))
+    return makeFloat(parseFloat(int + frac.join("")))
   }
   / "." Digits {
-    return make("float", parseFloat(text()))
+    return makeFloat(parseFloat(text()))
   }
 
 Digits "digits" = d:Digit+ { return d.join("") }

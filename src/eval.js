@@ -13,8 +13,11 @@ const {
   isNil,
   isChar,
   isNumber,
-  make,
   pair,
+  makeNative,
+  makeChar,
+  makeProc,
+  makeVector,
   nil,
   symbol,
   list,
@@ -22,36 +25,21 @@ const {
   True,
   False,
   syntacticForms,
-  isSyntaxticForm
+  isSyntaxticForm,
+  jsValToScmVal
 } = require("./types");
+
 
 const path = require("path");
 const { car, cdr, listEach, toList } = require("./listUtils");
-
 const { isEqv, isEqual, isSameType } = require("./equality");
-
 const { Env } = require("./Env");
-const Zero = make("int", 0);
 const fs = require("fs");
 const { printExp, expToString } = require("./print");
 
-const jsValToScmVal = v => {
-  const t = typeof v;
-  switch (t) {
-    case "number":
-      if (Math.floor(v) === v) return make("int", v);
-      return v === 0 ? Zero : make("float", v);
-    case "boolean":
-      return v === true ? True : False;
-    case "string":
-      return make("string", v);
-  }
-};
-
-const makeNative = (fn, minArgC, maxArgC = minArgC) =>
-  make("native-procedure", args => {
-    if (args.length < minArgC || args.length > maxArgC)
-      throw new Error("Invalid argument count");
+const defNativeFn = (fn, minArgC, maxArgC = minArgC) =>
+  makeNative(args => {
+    if (args.length < minArgC || args.length > maxArgC) throw new Error("Invalid argument count");
     if (minArgC === 1 && maxArgC === 1) {
       return fn(args[0]);
     }
@@ -61,19 +49,12 @@ const makeNative = (fn, minArgC, maxArgC = minArgC) =>
     return fn(args);
   });
 const wrapPred = fn =>
-  make("native-procedure", args => {
+  makeNative(args => {
     assertLen(args, 1);
-    return make("boolean", fn(args[0]));
+    return jsValToScmVal(fn(args[0]));
   });
 const assertLen = (arr, n) => {
-  if (arr.length !== n)
-    throw new Error(`Expected ${n} arguments, got ${arr.length}`);
-  return true;
-};
-
-const assertType = (e, t) => {
-  if (e.type !== t)
-    throw new Error("Expected expression of type " + t + " got " + e.type);
+  if (arr.length !== n) throw new Error(`Expected ${n} arguments, got ${arr.length}`);
   return true;
 };
 const assert = (t, msg) => {
@@ -81,9 +62,8 @@ const assert = (t, msg) => {
   return true;
 };
 
-
 const makeOp = (fn, id, opName) => {
-  return make("native-procedure", args => {
+  return makeNative(args => {
     return jsValToScmVal(
       args.reduce((l, r) => {
         if (!isNumber(r)) {
@@ -96,7 +76,7 @@ const makeOp = (fn, id, opName) => {
 };
 
 const makeRelatonalOp = (fn, op) =>
-  makeNative(
+  defNativeFn(
     args => {
       for (var i = 0; i < args.length; i++) {
         if (!isNumber(args[i])) throw new Error(op + " only works for numbers");
@@ -113,9 +93,8 @@ const makeRelatonalOp = (fn, op) =>
   );
 
 const wrapEq = fn =>
-  make("native-procedure", args => {
-    if (args.length !== 2)
-      throw new Error("Equivalence operators take two arguments");
+  makeNative(args => {
+    if (args.length !== 2) throw new Error("Equivalence operators take two arguments");
     const obj1 = args[0];
     const obj2 = args[1];
     if (!isSameType(obj1, obj2)) {
@@ -125,7 +104,7 @@ const wrapEq = fn =>
   });
 
 const makeAssoc = eqFn =>
-  makeNative((exp, alist) => {
+  defNativeFn((exp, alist) => {
     if (isNil(exp)) return False;
     while (isPair(alist)) {
       const [x, xs] = alist.value;
@@ -138,7 +117,7 @@ const makeAssoc = eqFn =>
   }, 2);
 
 const makeMem = eqFn =>
-  makeNative((exp, alist) => {
+  defNativeFn((exp, alist) => {
     if (isNil(exp)) return False;
     while (isPair(alist)) {
       if (eqFn(exp, alist.value[0]) === True) return alist;
@@ -148,74 +127,35 @@ const makeMem = eqFn =>
     throw new Error("Invalid list");
   }, 2);
 
-const evalBody = (fn, args) => {
-  const { body, params, env } = fn;
-  const newEnv = env.subscope();
-  console.log(params);
-  params.formals.forEach((name, i) => {
-    newEnv.define(name, args[i]);
-  });
-
-  if (params.hasRest) {
-    if (args.length < params.formals.length) {
-      throw new Error(
-        `Invalid parameter length expected at least ${
-          params.formals.length
-        } got ${args.length}`
-      );
-    }
-    newEnv.define(params.restArgName, list(args.slice(params.restFrom)));
-  } else {
-    if (args.length !== params.formals.length) {
-      throw new Error(
-        `Invalid parameter length expected ${params.formals.length} got ${
-          args.length
-        }`
-      );
-    }
-  }
-
-  let out = nil;
-  body.forEach((exp, i) => {
-    out = evalSExp(exp, newEnv, i === body.length - 1);
-  });
-  return out;
-}
-
 const prelude = {
   memq: makeMem(isEqv),
   memv: makeMem(isEqv),
   member: makeMem(isEqual),
   "eq?": wrapEq(isEqv),
-  "string-length": makeNative(string => {
-    assertType(string, "string");
+  "string-length": defNativeFn(string => {
     return jsValToScmVal(string.value.length);
   }, 1),
-  "string-append": make("native-procedure", args =>
-    make(
-      "string",
+  "string-append": makeNative(args =>
+    jsValToScmVal(
       args
         .map(i => {
-          assertType(i, "string");
           return i.value;
         })
         .join("")
     )
   ),
-  "string-ref": makeNative((string, i) => {
-    assertType(string, "string");
-    if (!isNumber(i))
-      throw new Error("2nd argument of string-ref should be an integer");
+  "string-ref": defNativeFn((string, i) => {
+    if (!isNumber(i)) throw new Error("2nd argument of string-ref should be an integer");
     const index = i.value;
     if (index < 0) throw new Error("index is negative");
-    return make("char", string.value[index]);
+    return makeChar(string.value[index]);
   }, 2),
   assv: makeAssoc(isEqv),
   assq: makeAssoc(isEqv),
   assoc: makeAssoc(isEqual),
   "pair?": wrapPred(isPair),
-  cons: makeNative(pair, 2),
-  "list?": makeNative(l => {
+  cons: defNativeFn(pair, 2),
+  "list?": defNativeFn(l => {
     if (isNil(l)) return True;
     if (!isPair(l)) return False;
     const visited = new Set();
@@ -226,53 +166,36 @@ const prelude = {
     }
     return jsValToScmVal(isNil(l));
   }, 1),
-  car: makeNative(car, 1),
-  cdr: makeNative(cdr, 1),
-  "set-car!": makeNative((pair, value) => {
-    assertType(pair, "pair");
+  car: defNativeFn(car, 1),
+  cdr: defNativeFn(cdr, 1),
+  "set-car!": defNativeFn((pair, value) => {
     pair.value[0] = value;
     return undefined;
   }, 2),
-  "set-cdr!": makeNative((pair, value) => {
-    assertType(pair, "pair");
+  "set-cdr!": defNativeFn((pair, value) => {
     pair.value[1] = value;
     return undefined;
   }, 2),
-  "char=?": makeNative((a, b) => {
-    assertType(a, "char");
-    assertType(b, "char");
+  "char=?": defNativeFn((a, b) => {
     return jsValToScmVal(a.value === b.value);
   }, 2),
   "symbol?": wrapPred(isSymbol),
-  "symbol->string": makeNative(
-    v => (assertType(v, "symbol"), jsValToScmVal(v.value)),
-    1
-  ),
+  "symbol->string": defNativeFn(v => (jsValToScmVal(v.value)), 1),
   "string?": wrapPred(isString),
-  "string->symbol": makeNative(
-    v => (assertType(v, "string"), symbol(v.value)),
-    1
-  ),
+  "string->symbol": defNativeFn(v => (symbol(v.value)), 1),
   "boolean?": wrapPred(isBoolean),
   "null?": wrapPred(isNil),
-  eval: make(
-    "native-procedure",
-    (args, env) => (assertLen(args, 1), evalSExp(runMacroExpansion(args[0], env), env, true))
-  ),
+  eval: makeNative((args, env) => {
+    const expanded = runMacroExpansion(args[0], env);
+    return evalSExp(expanded, env, true);
+  }),
   "char?": wrapPred(isChar),
   "number?": wrapPred(isNumber),
   "procedure?": wrapPred(isProcedure),
-  "call-with-current-continuation": make(
-    "native-procedure",
-    (args, callEnv) => {
-
-    },
-    1
-  ),
-  vector: make("native-procedure", (args, env) => make("vector", args)),
+  "call-with-current-continuation": makeNative((args, callEnv) => {}, 1),
+  vector: makeNative((args, env) => makeVector(args)),
   "vector?": wrapPred(isVector),
-  "vector-set!": makeNative((v, k, o) => {
-    assertType(v, "vector");
+  "vector-set!": defNativeFn((v, k, o) => {
     if (!isNumber(k)) {
       throw new Error("2nd arg of vector-ref must be number");
     }
@@ -282,13 +205,9 @@ const prelude = {
     v.value[k.value] = o;
     return undefined;
   }, 3),
-  "vector->list": makeNative(
-    v => (assertType(v, "vector"), toList(v.value)),
-    1
-  ),
-  "list->vector": makeNative(l => make("vector", toList(l)), 1),
-  "vector-ref": makeNative((v, k) => {
-    assertType(v, "vector");
+  "vector->list": defNativeFn(v => (toList(v.value)), 1),
+  "list->vector": defNativeFn(l => makeVector(toList(l)), 1),
+  "vector-ref": defNativeFn((v, k) => {
     if (!isNumber(k)) {
       throw new Error("2nd arg of vector-ref must be number");
     }
@@ -297,25 +216,18 @@ const prelude = {
     }
     return v.value[k.value];
   }, 2),
-  "vector-fill": makeNative((v, fill) => {
-    assertType(v, "vector");
+  "vector-fill": defNativeFn((v, fill) => {
     v.value.fill(fill);
     return undefined;
   }, 2),
-  "vector-length": makeNative(v => {
-    assertType(v, "vector");
+  "vector-length": defNativeFn(v => {
     return jsValToScmVal(v.value.length);
   }, 1),
-  "make-vector": makeNative(
-    (k, fill = nil) => make("vector", new Array(k.value).fill(fill)),
-    1,
-    2
-  ),
+  "make-vector": defNativeFn((k, fill = nil) => makeVector(new Array(k.value).fill(fill)), 1, 2),
   "+": makeOp((l, r) => l + r, 0, "+"),
   "*": makeOp((l, r) => l * r, 1, "*"),
-  "-": make("native-procedure", args => {
-    if (!isNumber(args[0]))
-      throw new Error("- only taskes numbers " + args[0].type);
+  "-": makeNative(args => {
+    if (!isNumber(args[0])) throw new Error("- only taskes numbers " + args[0].type);
     if (args.length === 1) {
       return jsValToScmVal(-args[0].value);
     }
@@ -331,11 +243,10 @@ const prelude = {
   "<=": makeRelatonalOp((l, r) => l <= r, "<="),
   ">": makeRelatonalOp((l, r) => l > r, ">"),
   ">=": makeRelatonalOp((l, r) => l >= r, ">="),
-  "=": make("native-procedure", args => {
+  "=": makeNative(args => {
     if (args.length < 2) throw new Error("= needs at least 2 arguments");
     const first = args[0].value;
-    if (!isNumber(args[0]))
-      throw new Error("= only taskes numbers " + args[0].type);
+    if (!isNumber(args[0])) throw new Error("= only taskes numbers " + args[0].type);
     for (var i = 1; i < args.length; i++) {
       if (!isNumber(args[i])) throw new Error("= only taskes numbers");
       if (first !== args[i].value) {
@@ -345,29 +256,20 @@ const prelude = {
     return True;
   }),
 
-  floor: makeNative(
-    v => (
-      assert(isNumber(v), "floor expects number"),
-      jsValToScmVal(Math.floor(v.value))
-    ),
+  floor: defNativeFn(
+    v => (assert(isNumber(v), "floor expects number"), jsValToScmVal(Math.floor(v.value))),
     1
   ),
-  ceiling: makeNative(
-    v => (
-      assert(isNumber(v), "ceiling expects number"),
-      jsValToScmVal(Math.ceil(v.value))
-    ),
+  ceiling: defNativeFn(
+    v => (assert(isNumber(v), "ceiling expects number"), jsValToScmVal(Math.ceil(v.value))),
     1
   ),
-  round: makeNative(
-    v => (
-      assert(isNumber(v), "ceiling expects number"),
-      jsValToScmVal(Math.round(v.value))
-    ),
+  round: defNativeFn(
+    v => (assert(isNumber(v), "ceiling expects number"), jsValToScmVal(Math.round(v.value))),
     1
   ),
   // "truncate"
-  "number->string": makeNative(
+  "number->string": defNativeFn(
     (v, k) => {
       assert(isNumber(v), "number->string expects number");
       if (!k) return jsValToScmVal(v.value.toString());
@@ -377,26 +279,20 @@ const prelude = {
     1,
     2
   ),
-  "string->vector": makeNative(
-    v => {
-      assertType(v, "string");
-      return make("vector", v.value.split("").map(c => make("char", c)));
-    },
-    1
-  ),
-  "vector->string": makeNative(
-    v => {
-      assertType(v, "vector");
-      return jsValToScmVal(v.value.map(c => {
-        assertType(c, "char");
-        return c.value;
-      }).join(""));
-    },
-    1
-  ),
-  "string->number": makeNative(
+  "string->vector": defNativeFn(v => {
+    return makeVector(v.value.split("").map(c => makeChar(c)));
+  }, 1),
+  "vector->string": defNativeFn(v => {
+    return jsValToScmVal(
+      v.value
+        .map(c => {
+          return c.value;
+        })
+        .join("")
+    );
+  }, 1),
+  "string->number": defNativeFn(
     (v, k) => {
-      assertType(v, "string");
       if (!k) return jsValToScmVal(parseFloat(v.value));
       assert(isNumber(k), "string->number radix must be number");
       if (k.value === 10) return jsValToScmVal(parseFloat(v.value));
@@ -405,13 +301,12 @@ const prelude = {
     1,
     2
   ),
-  display: makeNative(
+  display: defNativeFn(
     (exp, port) => {
       if (!port) {
         process.stdout.write(printExp(exp));
       } else {
-        if (!isPort(port))
-          throw new Error("2nd argument for display must be port");
+        if (!isPort(port)) throw new Error("2nd argument for display must be port");
         port.value.write(expToString(exp));
       }
       return nil;
@@ -419,31 +314,36 @@ const prelude = {
     1,
     2
   ),
-  "values": make(
-    "native-procedure",
-    (args, env) => {throw new Error("Not implemented")},
+  values: makeNative(
+    (args, env) => {
+      throw new Error("Not implemented");
+    },
     0,
     Infinity
   ),
-  "call-with-values": make(
-    "native-procedure",
-    (args, env) => {throw new Error("Not implemented")},
+  "call-with-values": makeNative(
+    (args, env) => {
+      throw new Error("Not implemented");
+    },
     2
   ),
-  apply: make(
-    "native-procedure",
-    (args, env) => {throw new Error("Not implemented")},
+  apply: makeNative(
+    (args, env) => {
+      throw new Error("Not implemented");
+    },
     2
   ),
-  map: make(
-    "native-procedure",
-    (args, env) => {throw new Error("Not implemented")},
+  map: makeNative(
+    (args, env) => {
+      throw new Error("Not implemented");
+    },
     2,
     Infinity
   ),
-  "for-each": make(
-    "native-procedure",
-    (args, env) => {throw new Error("Not implemented")},
+  "for-each": makeNative(
+    (args, env) => {
+      throw new Error("Not implemented");
+    },
     2,
     Infinity
   )
@@ -456,6 +356,7 @@ const parseArgs = formals => {
     restFrom: null,
     restArgName: null
   };
+
   if (isSymbol(formals)) {
     params.formals.push(formals.value);
     params.hasRest = true;
@@ -466,9 +367,7 @@ const parseArgs = formals => {
     while (isPair(formalsArr)) {
       const v = car(formalsArr);
       if (!isSymbol(v) || syntacticForms.has(v.value)) {
-        throw new Error(
-          "Invalid formals definition, expected symbol got " + v.type
-        );
+        throw new Error("Invalid formals definition, expected symbol got " + v.type);
       }
       params.formals.push(v.value);
       formalsArr = cdr(formalsArr);
@@ -485,7 +384,7 @@ const parseArgs = formals => {
     }
   }
   return params;
-}
+};
 
 const makeProcedure = (formals, body, env, name) => {
   const params = parseArgs(formals);
@@ -496,7 +395,6 @@ const makeProcedure = (formals, body, env, name) => {
     name
   };
 };
-
 
 // Base syntax forms
 const syntaxticForms = {
@@ -528,7 +426,7 @@ const syntaxticForms = {
   },
   quote: (exp, env) => exp.value[0],
   lambda: (exp, env) => {
-    return make("procedure", makeProcedure(car(exp), cdr(exp), env));
+    return makeProc(makeProcedure(car(exp), cdr(exp), env));
   },
   "set!": (exp, env) => {
     const l = toList(exp);
@@ -559,11 +457,10 @@ const syntaxticForms = {
     if (isPair(head)) {
       // define procedure
       const name = car(head);
-      assertType(name, "symbol");
       assert(!syntacticForms.has(name.value), "Cannot redefine syntatic form");
       env.define(
         name.value,
-        make("procedure", makeProcedure(cdr(head), cdr(exp), env, name.value))
+        makeProc(makeProcedure(cdr(head), cdr(exp), env, name.value))
       );
     } else if (isSymbol(head)) {
       assert(!syntacticForms.has(head.value), "Cannot redefine syntatic form");
@@ -583,22 +480,18 @@ const evalProcedure = ({ body, params, env }, xs, callEnv) => {
   if (params.hasRest) {
     if (argArr.length < params.formals.length - 1) {
       throw new Error(
-        `Invalid parameter length expected at least ${
-          params.formals.length
-        } got ${argArr.length}`
+        `Invalid parameter length expected at least ${params.formals.length} got ${argArr.length}`
       );
     }
     newEnv.set(params.restArgName, list(argArr.slice(params.restFrom)));
   } else {
     if (argArr.length !== params.formals.length) {
       throw new Error(
-        `Invalid parameter length expected ${params.formals.length} got ${
-          argArr.length
-        }`
+        `Invalid parameter length expected ${params.formals.length} got ${argArr.length}`
       );
     }
   }
- 
+
   let out = nil;
   body.forEach((exp, i) => {
     out = evalSExp(exp, newEnv, i === body.length - 1);
@@ -630,9 +523,9 @@ const evalSExp = (exp, env, tailPosition = false) => {
   }
   return evalProcedure(result.value, xs, env);
 };
-const getPhasedSymbolName = sym =>  `${sym.value}^${sym.phase}`;
+const getPhasedSymbolName = sym => `${sym.value}^${sym.phase}`;
 
-class RenameEnv  {
+class RenameEnv {
   constructor(parent, top, verbose) {
     this.vars = new Map();
     this.parent = parent;
@@ -658,26 +551,26 @@ class RenameEnv  {
 
   lookup(sym) {
     if (!isSymbol(sym)) throw new Error("Cannot lookup " + sym.type + " as variable name");
-     if (isDefinedByMacro(sym)) {
-       const macroName = getPhasedSymbolName(sym);
-       if (this.vars.has(macroName)) {
-         return this.vars.get(macroName);
-       }
-     }
-     if (this.vars.has(sym.value)) {
-       return this.vars.get(sym.value);
-     }
-     if (this.parent) {
-       return this.parent.lookup(sym);
-     }
-     return sym;
+    if (isDefinedByMacro(sym)) {
+      const macroName = getPhasedSymbolName(sym);
+      if (this.vars.has(macroName)) {
+        return this.vars.get(macroName);
+      }
+    }
+    if (this.vars.has(sym.value)) {
+      return this.vars.get(sym.value);
+    }
+    if (this.parent) {
+      return this.parent.lookup(sym);
+    }
+    return sym;
   }
 }
 
 const renameLambda = (formals, body, env) => {
   const sub = env.subscope();
   if (isSymbol(formals)) {
-    return [sub.define(formals), renameExpandedSymbols(body, sub)]
+    return [sub.define(formals), renameExpandedSymbols(body, sub)];
   } else if (isPair(formals) || isNil(formals)) {
     let formalsArr = formals;
     const args = [];
@@ -691,15 +584,15 @@ const renameLambda = (formals, body, env) => {
         throw new Error("Rest arg cannot have name " + v.value);
       }
       args.push(sub.define(formalsArr));
-      return [list(args, formalsArr), renameExpandedSymbols(body, sub)]
+      return [list(args, formalsArr), renameExpandedSymbols(body, sub)];
     } else if (!isNil(formalsArr)) {
       throw new Error("Invalid rest arg type " + v.type);
     }
-    return [list(args), renameExpandedSymbols(body, sub)]
+    return [list(args), renameExpandedSymbols(body, sub)];
   } else {
     throw new Error("Invalid formals type " + formals.type);
   }
-}
+};
 
 const renamePhaseSyntactic = {
   unquote: () => {
@@ -712,10 +605,14 @@ const renamePhaseSyntactic = {
     if (!isPair(exp)) return [symbol("quasiquote"), exp];
     let out = [symbol("quasiquote")];
     listEach(exp.value[0], e => {
-      if (isPair(e) && isSymbol(e.value[0]) && (e.value[0].value === "unquote" || e.value[0].value === "unquote-splicing")) {
+      if (
+        isPair(e) &&
+        isSymbol(e.value[0]) &&
+        (e.value[0].value === "unquote" || e.value[0].value === "unquote-splicing")
+      ) {
         out.push(list([x, renameExpandedSymbols(e.value[1], env)]));
       } else {
-        out.push(renameExpandedSymbols(e, env));  
+        out.push(renameExpandedSymbols(e, env));
       }
     });
     return list(out);
@@ -740,7 +637,7 @@ const renamePhaseSyntactic = {
   },
   if: (exp, env) => {
     const [test, then, els] = toList(exp).map(e => renameExpandedSymbols(e, env));
-    if(!els) return pair(symbol("if"), pair(test, pair(then, nil)));
+    if (!els) return pair(symbol("if"), pair(test, pair(then, nil)));
     return pair(symbol("if"), pair(test, pair(then, pair(els, nil))));
   },
 
@@ -749,7 +646,7 @@ const renamePhaseSyntactic = {
     if (isPair(head)) {
       // define procedure
       const name = env.define(car(head));
-      const args = cdr(head)
+      const args = cdr(head);
       const body = cdr(exp);
       const [renamedArgs, renamedBody] = renameLambda(args, body, env);
 
@@ -776,9 +673,8 @@ const renameExpandedSymbols = (exp, env) => {
   if (isSyntaxticForm(x)) {
     return renamePhaseSyntactic[x.value](xs, env);
   }
-  return pair(renameExpandedSymbols(x, env), renameExpandedSymbols(xs, env))
-}
-
+  return pair(renameExpandedSymbols(x, env), renameExpandedSymbols(xs, env));
+};
 
 const performMacroExpansion = (exp, env) => {
   if (!isPair(exp)) return exp;
@@ -802,14 +698,11 @@ const runMacroExpansion = (exp, env) => {
 
 const makeEnv = () => {
   const rootEnv = new Env();
-  Object.assign(rootEnv.scope, prelude)
-  const preludeSrc = fs.readFileSync(
-    path.join(__dirname, "prelude.scm"),
-    "utf-8"
-  );
+  Object.assign(rootEnv.scope, prelude);
+  const preludeSrc = fs.readFileSync(path.join(__dirname, "prelude.scm"), "utf-8");
   try {
     grammar.parse(preludeSrc).forEach(exp => evalSExp(runMacroExpansion(exp, rootEnv), rootEnv));
-  } catch(e) {
+  } catch (e) {
     console.log("invalid prelude file");
     console.log(e);
     process.exit(1);
@@ -817,25 +710,24 @@ const makeEnv = () => {
   return new Env(rootEnv);
 };
 
-const runFile = (src, env = makeEnv(), v=false) => {
-  grammar.parse(fs.readFileSync(src, "utf-8")).forEach(exp => evalSExp(runMacroExpansion(exp, env), env));
-}
+const runFile = (src, env = makeEnv(), v = false) => {
+  grammar
+    .parse(fs.readFileSync(src, "utf-8"))
+    .forEach(exp => evalSExp(runMacroExpansion(exp, env), env));
+};
 
-const compileFile = (src, env = makeEnv(), v=false) => {
+const compileFile = (src, env = makeEnv(), v = false) => {
   const code = [];
   grammar.parse(fs.readFileSync(src, "utf-8")).forEach(exp => {
     const expanded = runMacroExpansion(exp, env);
     code.push(compileASTToByteCode(expanded));
   });
   return code;
-}
-
+};
 
 const repl = () => {
   const env = makeEnv();
-  console.log(
-    `R4rsjs Interpreter version 0.1 🎉\nCopyright ©️  2019 Jan Kjærgaard`
-  );
+  console.log(`R4rsjs Interpreter version 0.1 🎉\nCopyright ©️  2019 Jan Kjærgaard`);
   const repl = require("repl");
   const r = repl.start({ prompt: "> ", eval: evalCmd, writer: myWriter });
   function evalCmd(cmd, context, filename, callback) {

@@ -21,11 +21,7 @@ const parsePattern = (exp, tag, literals, bound, env) => {
     if (exp.value === "...") {
       throw new Error("Invalid ellipsis");
     }
-    if (
-      syntacticForms.has(exp.value) ||
-      literals.has(exp.value) ||
-      exp.value === tag
-    ) {
+    if (syntacticForms.has(exp.value) || literals.has(exp.value) || exp.value === tag) {
       return {
         type: "literal",
         value: exp.value
@@ -133,15 +129,13 @@ const parseExpansion = (
           bindings: expansions[expansions.length - 1].bindings
         };
       } else {
-        expansions.push(
-          parseExpansion(x, match, macroTag, literals, env, thisBindings, parseEnv)
-        );
+        expansions.push(parseExpansion(x, match, macroTag, literals, env, thisBindings, parseEnv));
       }
       exp = xs;
     } while (isPair(exp));
     const last = isNil(exp)
       ? nil
-      : parseExpansion(exp, match, macroTag, literals, env, thisBindings, parseEnv)
+      : parseExpansion(exp, match, macroTag, literals, env, thisBindings, parseEnv);
     thisBindings.forEach(b => usedBindings.add(b));
     return {
       type: "list",
@@ -178,7 +172,7 @@ const matchExp = (pattern, exp) => {
       let out = {};
       for (let i = 0; i < pattern.matchers.length; i++) {
         if (!isPair(exp)) {
-           throw new Error("Expected pair, got " + printExp(exp));
+          throw new Error("Expected pair, got " + printExp(exp));
         }
         let submatch = matchExp(pattern.matchers[i], exp.value[0]);
         Object.assign(out, submatch);
@@ -194,13 +188,13 @@ const matchExp = (pattern, exp) => {
         });
       } else if (pattern.last) {
         if (isPair(exp)) {
-           throw new Error("Unexpected pair, got " + printExp(exp));
+          throw new Error("Unexpected pair, got " + printExp(exp));
         }
         let submatch = matchExp(pattern.last, exp);
         Object.assign(out, submatch);
       } else {
         if (!isNil(exp)) {
-           throw new Error("Expected end of list " + printExp(exp));
+          throw new Error("Expected end of list " + printExp(exp));
         }
       }
       return out;
@@ -270,7 +264,7 @@ const runExpansion = (vars, exp, env) => {
           const n = runExpansion(vars, e, env);
           if (!n) {
           } else {
-            out.push(n);  
+            out.push(n);
           }
         }
       }
@@ -289,7 +283,7 @@ const makeSyntax = (tag, rules, defEnv) => {
       try {
         match = matchExp(rules[i].matcher.pattern, exp);
         if (!match) continue;
-      } catch(e) {
+      } catch (e) {
         errors.push(e.message);
         continue;
       }
@@ -330,13 +324,7 @@ const defineSyntax = (exp, parseEnv) => {
         pattern,
         matcher,
         template,
-        expander: parseExpansion(
-          template,
-          matcher,
-          tag.value,
-          literalStrings,
-          parseEnv
-        )
+        expander: parseExpansion(template, matcher, tag.value, literalStrings, parseEnv)
       };
     }),
     parseEnv
@@ -344,5 +332,5 @@ const defineSyntax = (exp, parseEnv) => {
 
   parseEnv.defineSyntax(tag.value, syntaxRule);
   return nil;
-}
+};
 module.exports.defineSyntax = defineSyntax;

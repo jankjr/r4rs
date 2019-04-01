@@ -193,19 +193,19 @@ function peg$parse(input, options) {
       peg$c30 = "#\\newline",
       peg$c31 = peg$literalExpectation("#\\newline", false),
       peg$c32 = function() {
-        return make("char", "\n")
+        return makeChar("\n")
       },
       peg$c33 = "#\\space",
       peg$c34 = peg$literalExpectation("#\\space", false),
       peg$c35 = function() {
-        return make("char", " ")
+        return makeChar(" ")
       },
       peg$c36 = "#\\",
       peg$c37 = peg$literalExpectation("#\\", false),
       peg$c38 = /^[^ \t\n\r;]/,
       peg$c39 = peg$classExpectation([" ", "\t", "\n", "\r", ";"], true, false),
       peg$c40 = function(c) {
-        return make("char", c)
+        return makeChar(c)
       },
       peg$c41 = function(x, xs) { return symbol(x + xs.join("")) },
       peg$c42 = function() { return symbol(text()) },
@@ -248,7 +248,7 @@ function peg$parse(input, options) {
       peg$c79 = peg$otherExpectation("string"),
       peg$c80 = "\"",
       peg$c81 = peg$literalExpectation("\"", false),
-      peg$c82 = function(chrs) { return make("string", chrs.join("")) },
+      peg$c82 = function(chrs) { return makeString(chrs.join("")) },
       peg$c83 = peg$otherExpectation("char"),
       peg$c84 = /^[^\\"]/,
       peg$c85 = peg$classExpectation(["\\", "\""], true, false),
@@ -277,11 +277,11 @@ function peg$parse(input, options) {
        },
       peg$c104 = peg$otherExpectation("number"),
       peg$c105 = function(int, frac) {
-          if (!frac) return make("int", parseInt(int))
-          return make("float", parseFloat(int + frac.join("")))
+          if (!frac) return makeInt(parseInt(int))
+          return makeFloat(parseFloat(int + frac.join("")))
         },
       peg$c106 = function() {
-          return make("float", parseFloat(text()))
+          return makeFloat(parseFloat(text()))
         },
       peg$c107 = peg$otherExpectation("digits"),
       peg$c108 = function(d) { return d.join("") },
@@ -1582,7 +1582,10 @@ function peg$parse(input, options) {
 
 
     const{
-      make,
+      makeChar,
+      makeString,
+      makeFloat,
+      makeInt,
       pair,
       nil,
       symbol,

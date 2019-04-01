@@ -1,4 +1,19 @@
-const { isPair, isNil } = require("./types");
+const {
+  isPair,
+  isNil,
+  T_STRING,
+  T_CHAR,
+  T_SYMBOL,
+  T_INT,
+  T_FLOAT,
+  T_BOOLEAN,
+  T_PROC,
+  T_NATIVE,
+  T_PAIR,
+  T_VECTOR,
+  T_NULL,
+  T_PORT
+} = require("./types");
 
 const { car, cdr } = require("./listUtils");
 
@@ -8,29 +23,29 @@ const indent = () => " ".repeat(level);
 const printExp = (exp, top = true) => {
   if (!exp) return "(undefined)";
   switch (exp.type) {
-    case "boolean":
+    case T_BOOLEAN:
       if (exp.value) return chalk.red("#t");
       else return chalk.red("#f");
-    case "char":
+    case T_CHAR:
       return chalk.green("#\\" + exp.value);
-    case "port":
+    case T_PORT:
       return chalk.blue(`[port ${exp.value.name}]`);
-    case "float":
-    case "int":
+    case T_FLOAT:
+    case T_INT:
       return chalk.yellow(exp.value.toString());
-    case "string":
+    case T_STRING:
       return !top ? chalk.green(`"${exp.value}"`) : exp.value;
-    case "symbol":
+    case T_SYMBOL:
       if (exp.phase !== -1) return `${exp.value}$${exp.phase}`;
       return exp.value;
-    case "procedure":
+    case T_PROC:
       if (exp.value.name) {
         return chalk.red(`[procedure ${exp.value.name}]`);
       }
       return chalk.red("[procedure]");
-    case "native-procedure":
+    case T_NATIVE:
       return chalk.red("[native-procedure]");
-    case "pair":
+    case T_PAIR:
       let res = [];
       while (isPair(exp)) {
         res.push(printExp(car(exp), false));
@@ -41,9 +56,9 @@ const printExp = (exp, top = true) => {
       }
       const out = `(${res.join(" ")} . ${printExp(exp, false)})`;
       return out;
-    case "null":
+    case T_NULL:
       return "()";
-    case "vector":
+    case T_VECTOR:
       return `#(${exp.value.map(e => printExp(e, false)).join(" ")})`;
     default:
       throw new Error("unknown type " + exp);
@@ -52,28 +67,28 @@ const printExp = (exp, top = true) => {
 const expToString = exp => {
   if (!exp) return "(undefined)";
   switch (exp.type) {
-    case "boolean":
+    case T_BOOLEAN:
       if (exp.value) return "#t";
       else return "#f";
-    case "char":
+    case T_CHAR:
       return "#\\" + exp.value;
-    case "port":
+    case T_PORT:
       return `[port ${exp.value.name}]`;
-    case "float":
-    case "int":
+    case T_FLOAT:
+    case T_INT:
       return exp.value.toString();
-    case "string":
+    case T_STRING:
       return `"${exp.value}"`;
-    case "symbol":
+    case T_SYMBOL:
       return exp.value;
-    case "procedure":
+    case T_PROC:
       if (exp.value.name) {
         return `[procedure ${exp.value.name}]`;
       }
       return "[procedure]";
-    case "native-procedure":
+    case T_NATIVE:
       return "[native-procedure]";
-    case "pair":
+    case T_PAIR:
       let res = [];
       while (isPair(exp)) {
         res.push(expToString(car(exp)));
@@ -83,9 +98,9 @@ const expToString = exp => {
         return `(${res.join(" ")})`;
       }
       return `(${res.join(" ")} . ${expToString(exp)})`;
-    case "null":
+    case T_NULL:
       return "()";
-    case "vector":
+    case T_VECTOR:
       return `#(${exp.value.map(expToString).join(" ")})`;
   }
 };

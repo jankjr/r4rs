@@ -1,8 +1,5 @@
 // represents a scheme variable scope
-const {
-  syntacticForms,
-  isSymbol
-} = require("./types");
+const { syntacticForms, isSymbol } = require("./types");
 const { defineSyntax } = require("./preludeSyntaxRules");
 class Env {
   constructor(parent) {
@@ -39,7 +36,7 @@ class Env {
   }
   isDefined(name) {
     if (name in this.scope || name in this.syntaxRules) {
-      return true
+      return true;
     }
     if (this.parent) return this.parent.isDefined(name);
     return false;
